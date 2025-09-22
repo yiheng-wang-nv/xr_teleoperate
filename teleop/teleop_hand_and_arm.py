@@ -43,7 +43,7 @@ RECORD_READY   = True   # True if [Ready], False if [Recording] / [AutoSave]
 TASK_NAME = None
 TASK_DESC = None
 ITEM_ID = None
-## Keyboard control for Dex3 left thumb
+## Keyboard control for Dex3 thumbs (controller mode)
 LEFT_DEX3_CMD_ARRAY = None  # will be set after arrays are created
 RIGHT_DEX3_CMD_ARRAY = None # will be set after arrays are created
 DEX3_LEFT_LIMITS = {
@@ -53,10 +53,14 @@ DEX3_LEFT_LIMITS = {
 }
 DEX3_KB_STEP = 0.05
 PRESSED_KEYS = set()
-# Thumb1 custom target range and step (0° to +30°, 10% per press)
+# Left thumb1 custom target range and step (0° to +30°, 10% per press)
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 30.0 * np.pi / 180.0
 THUMB1_STEP_RAD = (THUMB1_MAX_RAD - THUMB1_MIN_RAD) * 0.10  # magnitude 10% of full span
+# Right thumb1 custom target range and step (-30.4° to 0°, 10% per press)
+R_THUMB1_MIN_RAD = -30.4 * np.pi / 180.0
+R_THUMB1_MAX_RAD = 0.0
+R_THUMB1_STEP_RAD = (R_THUMB1_MAX_RAD - R_THUMB1_MIN_RAD) * 0.10
 def on_press(key):
     global STOP, START, RECORD_TOGGLE
     if key == 'r':
@@ -66,7 +70,7 @@ def on_press(key):
     elif key == 's' and START == True:
         RECORD_TOGGLE = True
     else:
-        # Dex3 left thumb1 only: c/v -> thumb1 -/+
+        # Keyboard: left thumb1 c/v, right thumb1 b/n
         if key in ('c','v') and LEFT_DEX3_CMD_ARRAY is not None:
             PRESSED_KEYS.add(key)
             try:
@@ -79,11 +83,23 @@ def on_press(key):
                     LEFT_DEX3_CMD_ARRAY[:] = cmd
             except Exception as e:
                 logger_mp.warning(f"[on_press] Failed to update Dex3 cmd via keyboard: {e}")
+        elif key in ('b','n') and RIGHT_DEX3_CMD_ARRAY is not None:
+            PRESSED_KEYS.add(key)
+            try:
+                with RIGHT_DEX3_CMD_ARRAY.get_lock():
+                    cmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
+                    if key == 'b':  # move toward -30.4°
+                        cmd[1] = float(np.clip(cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                    elif key == 'n':  # move toward 0°
+                        cmd[1] = float(np.clip(cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                    RIGHT_DEX3_CMD_ARRAY[:] = cmd
+            except Exception as e:
+                logger_mp.warning(f"[on_press] Failed to update right Dex3 cmd via keyboard: {e}")
         else:
             logger_mp.warning(f"[on_press] {key} was pressed, but no action is defined for this key.")
 
 def on_release(key):
-    if key in ('c','v') and key in PRESSED_KEYS:
+    if key in ('c','v','b','n') and key in PRESSED_KEYS:
         PRESSED_KEYS.discard(key)
 
 def on_info(info):
@@ -224,7 +240,7 @@ if __name__ == '__main__':
             with left_dex3_cmd_q_array.get_lock():
                 # Order: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1]
                 left_init = np.array([
-                    -34.0 * np.pi / 180.0,  # thumb0 -> -34.0°
+                    -34.7 * np.pi / 180.0,  # thumb0 -> -34.7°
                     0.0,                    # thumb1 -> 0° (will be controlled by c/v)
                     0.0,                    # thumb2 -> 0°
                     -90.0 * np.pi / 180.0,  # middle0 -> -90° (within [-90°, 0°])
@@ -234,7 +250,21 @@ if __name__ == '__main__':
                 ], dtype=float)
                 left_dex3_cmd_q_array[:] = left_init
             with right_dex3_cmd_q_array.get_lock():
-                right_dex3_cmd_q_array[:] = np.zeros(7)
+                # Order: [thumb0, thumb1, thumb2, index0, index1, middle0, middle1] for right array
+                # (Our right array uses same 7-length convention as left: [t0,t1,t2,m0,m1,i0,i1])
+                right_init = np.array([
+                    -25.4 * np.pi / 180.0,  # thumb0 -> -25.4°
+                    0.0,                    # thumb1 -> 0° (controlled by b/n)
+                    0.0,                    # thumb2 -> 0°
+                    0.0,                    # middle0 (placeholder, not used)
+                    0.0,                    # middle1 (placeholder, not used)
+                    90.0 * np.pi / 180.0,   # index0  -> 90°
+                    0.0,                    # index1  -> 0°
+                ], dtype=float)
+                # But we also need middle0=90°, middle1=0°. Our left-order array is [t0,t1,t2,m0,m1,i0,i1]
+                right_init[3] = 90.0 * np.pi / 180.0   # middle0 -> 90°
+                right_init[4] = 0.0                    # middle1 -> 0°
+                right_dex3_cmd_q_array[:] = right_init
             dual_hand_data_lock = Lock()
             dual_hand_state_array = Array('d', 14, lock = False)   # [output] current left, right hand state(14) data.
             dual_hand_action_array = Array('d', 14, lock = False)  # [output] current left, right hand action(14) data.
@@ -357,7 +387,7 @@ if __name__ == '__main__':
                 with right_dex3_cmd_q_array.get_lock():
                     right_cmd = np.array(right_dex3_cmd_q_array[:])
 
-                # Only thumb1 via controller: map trigger/grip to 10% steps toward 0° / -32°
+                # Only left thumb1 via controller: map trigger/grip to 10% steps
                 if tele_data.tele_state.left_trigger_state:
                     left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
                 if tele_data.tele_state.left_squeeze_ctrl_state:
@@ -365,18 +395,20 @@ if __name__ == '__main__':
 
                 # Also support keyboard long-press in controller mode
                 if PRESSED_KEYS:
-                    if 'z' in PRESSED_KEYS:
-                        pass
-                    if 'x' in PRESSED_KEYS:
-                        pass
                     if 'c' in PRESSED_KEYS:
                         left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
                     if 'v' in PRESSED_KEYS:
                         left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                    if 'b' in PRESSED_KEYS:
-                        pass
-                    if 'n' in PRESSED_KEYS:
-                        pass
+                    if 'b' in PRESSED_KEYS and RIGHT_DEX3_CMD_ARRAY is not None:
+                        with RIGHT_DEX3_CMD_ARRAY.get_lock():
+                            rcmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
+                            rcmd[1] = float(np.clip(rcmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                            RIGHT_DEX3_CMD_ARRAY[:] = rcmd
+                    if 'n' in PRESSED_KEYS and RIGHT_DEX3_CMD_ARRAY is not None:
+                        with RIGHT_DEX3_CMD_ARRAY.get_lock():
+                            rcmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
+                            rcmd[1] = float(np.clip(rcmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                            RIGHT_DEX3_CMD_ARRAY[:] = rcmd
 
                 # Final safety clipping for all joints
                 left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
