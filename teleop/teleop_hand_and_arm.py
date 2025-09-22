@@ -43,6 +43,20 @@ RECORD_READY   = True   # True if [Ready], False if [Recording] / [AutoSave]
 TASK_NAME = None
 TASK_DESC = None
 ITEM_ID = None
+## Keyboard control for Dex3 left thumb
+LEFT_DEX3_CMD_ARRAY = None  # will be set after arrays are created
+RIGHT_DEX3_CMD_ARRAY = None # will be set after arrays are created
+DEX3_LEFT_LIMITS = {
+    "thumb0": (-1.04719755, 1.04719755),
+    "thumb1": (-0.72431163, 1.04719755),
+    "thumb2": (0.0, 1.74532925),
+}
+DEX3_KB_STEP = 0.05
+PRESSED_KEYS = set()
+# Thumb1 custom target range and step (0° to +30°, 10% per press)
+THUMB1_MIN_RAD = 0.0
+THUMB1_MAX_RAD = 30.0 * np.pi / 180.0
+THUMB1_STEP_RAD = (THUMB1_MAX_RAD - THUMB1_MIN_RAD) * 0.10  # magnitude 10% of full span
 def on_press(key):
     global STOP, START, RECORD_TOGGLE
     if key == 'r':
@@ -52,7 +66,25 @@ def on_press(key):
     elif key == 's' and START == True:
         RECORD_TOGGLE = True
     else:
-        logger_mp.warning(f"[on_press] {key} was pressed, but no action is defined for this key.")
+        # Dex3 left thumb1 only: c/v -> thumb1 -/+
+        if key in ('c','v') and LEFT_DEX3_CMD_ARRAY is not None:
+            PRESSED_KEYS.add(key)
+            try:
+                with LEFT_DEX3_CMD_ARRAY.get_lock():
+                    cmd = np.array(LEFT_DEX3_CMD_ARRAY[:])
+                    if key == 'c':  # move toward 0°
+                        cmd[1] = float(np.clip(cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    elif key == 'v':  # move toward 30°
+                        cmd[1] = float(np.clip(cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    LEFT_DEX3_CMD_ARRAY[:] = cmd
+            except Exception as e:
+                logger_mp.warning(f"[on_press] Failed to update Dex3 cmd via keyboard: {e}")
+        else:
+            logger_mp.warning(f"[on_press] {key} was pressed, but no action is defined for this key.")
+
+def on_release(key):
+    if key in ('c','v') and key in PRESSED_KEYS:
+        PRESSED_KEYS.discard(key)
 
 def on_info(info):
     """Only handle CMD_TOGGLE_RECORD's task info"""
@@ -101,7 +133,7 @@ if __name__ == '__main__':
             ipc_server.start()
         # sshkeyboard communication
         else:
-            listen_keyboard_thread = threading.Thread(target=listen_keyboard, kwargs={"on_press": on_press, "until": None, "sequential": False,}, daemon=True)
+            listen_keyboard_thread = threading.Thread(target=listen_keyboard, kwargs={"on_press": on_press, "on_release": on_release, "until": None, "sequential": False,}, daemon=True)
             listen_keyboard_thread.start()
 
         # image client: img_config should be the same as the configuration in image_server.py (of Robot's development computing unit)
@@ -184,12 +216,33 @@ if __name__ == '__main__':
 
         # end-effector
         if args.ee == "dex3":
-            left_hand_pos_array = Array('d', 75, lock = True)      # [input]
+            left_hand_pos_array = Array('d', 75, lock = True)      # [input] hand tracking positions
             right_hand_pos_array = Array('d', 75, lock = True)     # [input]
+            # Always create command arrays so keyboard can work even without controllers
+            left_dex3_cmd_q_array = Array('d', 7, lock = True)
+            right_dex3_cmd_q_array = Array('d', 7, lock = True)
+            with left_dex3_cmd_q_array.get_lock():
+                # Order: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1]
+                left_init = np.array([
+                    -34.0 * np.pi / 180.0,  # thumb0 -> -34.0°
+                    0.0,                    # thumb1 -> 0° (will be controlled by c/v)
+                    0.0,                    # thumb2 -> 0°
+                    -90.0 * np.pi / 180.0,  # middle0 -> -90° (within [-90°, 0°])
+                    0.0,                    # middle1 -> 0°
+                    -90.0 * np.pi / 180.0,  # index0  -> -90° (within [-90°, 0°])
+                    0.0,                    # index1  -> 0°
+                ], dtype=float)
+                left_dex3_cmd_q_array[:] = left_init
+            with right_dex3_cmd_q_array.get_lock():
+                right_dex3_cmd_q_array[:] = np.zeros(7)
             dual_hand_data_lock = Lock()
             dual_hand_state_array = Array('d', 14, lock = False)   # [output] current left, right hand state(14) data.
             dual_hand_action_array = Array('d', 14, lock = False)  # [output] current left, right hand action(14) data.
-            hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim)
+            hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim,
+                                          left_cmd_q_in=left_dex3_cmd_q_array, right_cmd_q_in=right_dex3_cmd_q_array)
+            # expose arrays for keyboard handler
+            LEFT_DEX3_CMD_ARRAY = left_dex3_cmd_q_array
+            RIGHT_DEX3_CMD_ARRAY = right_dex3_cmd_q_array
         elif args.ee == "dex1":
             left_gripper_value = Value('d', 0.0, lock=True)        # [input]
             right_gripper_value = Value('d', 0.0, lock=True)       # [input]
@@ -296,6 +349,44 @@ if __name__ == '__main__':
                     left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
                 with right_hand_pos_array.get_lock():
                     right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
+            elif args.ee == "dex3" and args.xr_mode == "controller":
+                # Button-based control for Dex3 joints in controller mode
+                # Read current command arrays
+                with left_dex3_cmd_q_array.get_lock():
+                    left_cmd = np.array(left_dex3_cmd_q_array[:])
+                with right_dex3_cmd_q_array.get_lock():
+                    right_cmd = np.array(right_dex3_cmd_q_array[:])
+
+                # Only thumb1 via controller: map trigger/grip to 10% steps toward 0° / -32°
+                if tele_data.tele_state.left_trigger_state:
+                    left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                if tele_data.tele_state.left_squeeze_ctrl_state:
+                    left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+
+                # Also support keyboard long-press in controller mode
+                if PRESSED_KEYS:
+                    if 'z' in PRESSED_KEYS:
+                        pass
+                    if 'x' in PRESSED_KEYS:
+                        pass
+                    if 'c' in PRESSED_KEYS:
+                        left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    if 'v' in PRESSED_KEYS:
+                        left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    if 'b' in PRESSED_KEYS:
+                        pass
+                    if 'n' in PRESSED_KEYS:
+                        pass
+
+                # Final safety clipping for all joints
+                left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
+                left_cmd[1] = np.clip(left_cmd[1], *DEX3_LEFT_LIMITS["thumb1"])
+                left_cmd[2] = np.clip(left_cmd[2], *DEX3_LEFT_LIMITS["thumb2"])
+
+                with left_dex3_cmd_q_array.get_lock():
+                    left_dex3_cmd_q_array[:] = left_cmd
+                with right_dex3_cmd_q_array.get_lock():
+                    right_dex3_cmd_q_array[:] = right_cmd
             elif args.ee == "dex1" and args.xr_mode == "controller":
                 with left_gripper_value.get_lock():
                     left_gripper_value.value = tele_data.left_trigger_value
