@@ -73,28 +73,8 @@ def on_press(key):
         # Keyboard: left thumb1 c/v, right thumb1 b/n
         if key in ('c','v') and LEFT_DEX3_CMD_ARRAY is not None:
             PRESSED_KEYS.add(key)
-            try:
-                with LEFT_DEX3_CMD_ARRAY.get_lock():
-                    cmd = np.array(LEFT_DEX3_CMD_ARRAY[:])
-                    if key == 'c':  # move toward 0°
-                        cmd[1] = float(np.clip(cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                    elif key == 'v':  # move toward 30°
-                        cmd[1] = float(np.clip(cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                    LEFT_DEX3_CMD_ARRAY[:] = cmd
-            except Exception as e:
-                logger_mp.warning(f"[on_press] Failed to update Dex3 cmd via keyboard: {e}")
         elif key in ('b','n') and RIGHT_DEX3_CMD_ARRAY is not None:
             PRESSED_KEYS.add(key)
-            try:
-                with RIGHT_DEX3_CMD_ARRAY.get_lock():
-                    cmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
-                    if key == 'b':  # move toward -30.4°
-                        cmd[1] = float(np.clip(cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                    elif key == 'n':  # move toward 0°
-                        cmd[1] = float(np.clip(cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                    RIGHT_DEX3_CMD_ARRAY[:] = cmd
-            except Exception as e:
-                logger_mp.warning(f"[on_press] Failed to update right Dex3 cmd via keyboard: {e}")
         else:
             logger_mp.warning(f"[on_press] {key} was pressed, but no action is defined for this key.")
 
