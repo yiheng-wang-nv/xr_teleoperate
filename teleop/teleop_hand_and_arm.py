@@ -52,18 +52,14 @@ DEX3_LEFT_LIMITS = {
     "thumb2": (0.0, 1.74532925),
 }
 DEX3_KB_STEP = 0.05
-PRESSED_KEYS = set()
-# Rate-limit long-press stepping to avoid big jumps on a short tap
-KEY_LAST_STEP_TS = {}
-KEY_STEP_INTERVAL = 0.12  # seconds between steps per key when held (≈8.3 Hz)
-# Left thumb1 custom target range and step (0° to +30°, 10% per press)
+# Left thumb1 custom target range and fixed step (3° per press)
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 30.0 * np.pi / 180.0
-THUMB1_STEP_RAD = (THUMB1_MAX_RAD - THUMB1_MIN_RAD) * 0.10  # magnitude 10% of full span
-# Right thumb1 custom target range and step (-30.0° to 0°, 10% per press)
+THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
+# Right thumb1 custom target range and fixed step (3° per press)
 R_THUMB1_MIN_RAD = -30.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0
-R_THUMB1_STEP_RAD = (R_THUMB1_MAX_RAD - R_THUMB1_MIN_RAD) * 0.10
+R_THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
 def on_press(key):
     global STOP, START, RECORD_TOGGLE
     if key == 'r':
@@ -75,15 +71,32 @@ def on_press(key):
     else:
         # Keyboard: left thumb1 c/v, right thumb1 b/n
         if key in ('c','v') and LEFT_DEX3_CMD_ARRAY is not None:
-            PRESSED_KEYS.add(key)
+            try:
+                with LEFT_DEX3_CMD_ARRAY.get_lock():
+                    cmd = np.array(LEFT_DEX3_CMD_ARRAY[:])
+                    if key == 'c':  # toward 0°
+                        cmd[1] = float(np.clip(cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    elif key == 'v':  # toward 30°
+                        cmd[1] = float(np.clip(cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    LEFT_DEX3_CMD_ARRAY[:] = cmd
+            except Exception as e:
+                logger_mp.warning(f"[on_press] Failed to update left Dex3 via keyboard: {e}")
         elif key in ('b','n') and RIGHT_DEX3_CMD_ARRAY is not None:
-            PRESSED_KEYS.add(key)
+            try:
+                with RIGHT_DEX3_CMD_ARRAY.get_lock():
+                    cmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
+                    if key == 'b':  # toward -30°
+                        cmd[1] = float(np.clip(cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                    elif key == 'n':  # toward 0°
+                        cmd[1] = float(np.clip(cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                    RIGHT_DEX3_CMD_ARRAY[:] = cmd
+            except Exception as e:
+                logger_mp.warning(f"[on_press] Failed to update right Dex3 via keyboard: {e}")
         else:
             logger_mp.warning(f"[on_press] {key} was pressed, but no action is defined for this key.")
 
 def on_release(key):
-    if key in ('c','v','b','n') and key in PRESSED_KEYS:
-        PRESSED_KEYS.discard(key)
+    pass
 
 def on_info(info):
     """Only handle CMD_TOGGLE_RECORD's task info"""
@@ -375,26 +388,6 @@ if __name__ == '__main__':
                     left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
                 if tele_data.tele_state.left_squeeze_ctrl_state:
                     left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-
-                # Also support keyboard long-press in controller mode with rate limiting
-                if PRESSED_KEYS:
-                    now_ts = time.time()
-                    if 'c' in PRESSED_KEYS:
-                        if now_ts - KEY_LAST_STEP_TS.get('c', 0) >= KEY_STEP_INTERVAL:
-                            left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                            KEY_LAST_STEP_TS['c'] = now_ts
-                    if 'v' in PRESSED_KEYS:
-                        if now_ts - KEY_LAST_STEP_TS.get('v', 0) >= KEY_STEP_INTERVAL:
-                            left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                            KEY_LAST_STEP_TS['v'] = now_ts
-                    if 'b' in PRESSED_KEYS:
-                        if now_ts - KEY_LAST_STEP_TS.get('b', 0) >= KEY_STEP_INTERVAL:
-                            right_cmd[1] = float(np.clip(right_cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                            KEY_LAST_STEP_TS['b'] = now_ts
-                    if 'n' in PRESSED_KEYS:
-                        if now_ts - KEY_LAST_STEP_TS.get('n', 0) >= KEY_STEP_INTERVAL:
-                            right_cmd[1] = float(np.clip(right_cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                            KEY_LAST_STEP_TS['n'] = now_ts
 
                 # Final safety clipping for all joints
                 left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
