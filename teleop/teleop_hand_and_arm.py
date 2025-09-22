@@ -60,6 +60,14 @@ THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
 R_THUMB1_MIN_RAD = -30.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0
 R_THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
+
+# Controller per-press edge detector state
+CONTROLLER_PREV = {
+    "la": False,  # left A (Quest left controller shows as A/B in this wrapper)
+    "lb": False,  # left B
+    "ra": False,  # right A
+    "rb": False,  # right B
+}
 def on_press(key):
     global STOP, START, RECORD_TOGGLE
     if key == 'r':
@@ -376,18 +384,33 @@ if __name__ == '__main__':
                 with right_hand_pos_array.get_lock():
                     right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
             elif args.ee == "dex3" and args.xr_mode == "controller":
-                # Button-based control for Dex3 joints in controller mode
+                # Button-based control for Dex3 joints in controller mode (per press, 3° step)
                 # Read current command arrays
                 with left_dex3_cmd_q_array.get_lock():
                     left_cmd = np.array(left_dex3_cmd_q_array[:])
                 with right_dex3_cmd_q_array.get_lock():
                     right_cmd = np.array(right_dex3_cmd_q_array[:])
 
-                # Only left thumb1 via controller: map trigger/grip to 10% steps
-                if tele_data.tele_state.left_trigger_state:
+                # Rising-edge detection using A/B buttons (commonly exposed by Quest 3)
+                la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
+                lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
+                ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
+                rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
+
+                # Left thumb1: A -> +3° (toward 30°), B -> -3° (toward 0°)
+                if la and not CONTROLLER_PREV["la"]:
                     left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                if tele_data.tele_state.left_squeeze_ctrl_state:
+                if lb and not CONTROLLER_PREV["lb"]:
                     left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+
+                # Right thumb1: A -> +3° (toward 0°), B -> -3° (toward -30°)
+                if ra and not CONTROLLER_PREV["ra"]:
+                    right_cmd[1] = float(np.clip(right_cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                if rb and not CONTROLLER_PREV["rb"]:
+                    right_cmd[1] = float(np.clip(right_cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+
+                CONTROLLER_PREV["la"], CONTROLLER_PREV["lb"] = la, lb
+                CONTROLLER_PREV["ra"], CONTROLLER_PREV["rb"] = ra, rb
 
                 # Final safety clipping for all joints
                 left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
