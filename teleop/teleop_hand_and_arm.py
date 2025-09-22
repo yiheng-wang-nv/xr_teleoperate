@@ -53,12 +53,15 @@ DEX3_LEFT_LIMITS = {
 }
 DEX3_KB_STEP = 0.05
 PRESSED_KEYS = set()
+# Rate-limit long-press stepping to avoid big jumps on a short tap
+KEY_LAST_STEP_TS = {}
+KEY_STEP_INTERVAL = 0.12  # seconds between steps per key when held (≈8.3 Hz)
 # Left thumb1 custom target range and step (0° to +30°, 10% per press)
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 30.0 * np.pi / 180.0
 THUMB1_STEP_RAD = (THUMB1_MAX_RAD - THUMB1_MIN_RAD) * 0.10  # magnitude 10% of full span
-# Right thumb1 custom target range and step (-30.4° to 0°, 10% per press)
-R_THUMB1_MIN_RAD = -30.4 * np.pi / 180.0
+# Right thumb1 custom target range and step (-30.0° to 0°, 10% per press)
+R_THUMB1_MIN_RAD = -30.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0
 R_THUMB1_STEP_RAD = (R_THUMB1_MAX_RAD - R_THUMB1_MIN_RAD) * 0.10
 def on_press(key):
@@ -373,22 +376,25 @@ if __name__ == '__main__':
                 if tele_data.tele_state.left_squeeze_ctrl_state:
                     left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
 
-                # Also support keyboard long-press in controller mode
+                # Also support keyboard long-press in controller mode with rate limiting
                 if PRESSED_KEYS:
+                    now_ts = time.time()
                     if 'c' in PRESSED_KEYS:
-                        left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                        if now_ts - KEY_LAST_STEP_TS.get('c', 0) >= KEY_STEP_INTERVAL:
+                            left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                            KEY_LAST_STEP_TS['c'] = now_ts
                     if 'v' in PRESSED_KEYS:
-                        left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                    if 'b' in PRESSED_KEYS and RIGHT_DEX3_CMD_ARRAY is not None:
-                        with RIGHT_DEX3_CMD_ARRAY.get_lock():
-                            rcmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
-                            rcmd[1] = float(np.clip(rcmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                            RIGHT_DEX3_CMD_ARRAY[:] = rcmd
-                    if 'n' in PRESSED_KEYS and RIGHT_DEX3_CMD_ARRAY is not None:
-                        with RIGHT_DEX3_CMD_ARRAY.get_lock():
-                            rcmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
-                            rcmd[1] = float(np.clip(rcmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                            RIGHT_DEX3_CMD_ARRAY[:] = rcmd
+                        if now_ts - KEY_LAST_STEP_TS.get('v', 0) >= KEY_STEP_INTERVAL:
+                            left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                            KEY_LAST_STEP_TS['v'] = now_ts
+                    if 'b' in PRESSED_KEYS:
+                        if now_ts - KEY_LAST_STEP_TS.get('b', 0) >= KEY_STEP_INTERVAL:
+                            right_cmd[1] = float(np.clip(right_cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                            KEY_LAST_STEP_TS['b'] = now_ts
+                    if 'n' in PRESSED_KEYS:
+                        if now_ts - KEY_LAST_STEP_TS.get('n', 0) >= KEY_STEP_INTERVAL:
+                            right_cmd[1] = float(np.clip(right_cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                            KEY_LAST_STEP_TS['n'] = now_ts
 
                 # Final safety clipping for all joints
                 left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
