@@ -467,6 +467,15 @@ if __name__ == '__main__':
                         right_hand_action = dual_hand_action_array[-7:]
                         current_body_state = []
                         current_body_action = []
+                elif args.ee == "dex3" and args.xr_mode == "controller":
+                    # Use hardware feedback data (controller commands should be reflected in hardware state)
+                    with dual_hand_data_lock:
+                        left_ee_state = dual_hand_state_array[:7]
+                        right_ee_state = dual_hand_state_array[-7:]
+                        left_hand_action = dual_hand_action_array[:7]
+                        right_hand_action = dual_hand_action_array[-7:]
+                        current_body_state = []
+                        current_body_action = []
                 elif args.ee == "dex1" and args.xr_mode == "hand":
                     with dual_gripper_data_lock:
                         left_ee_state = [dual_gripper_state_array[0]]
