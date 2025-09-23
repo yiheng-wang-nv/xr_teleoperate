@@ -52,22 +52,13 @@ DEX3_LEFT_LIMITS = {
     "thumb2": (0.0, 1.74532925),
 }
 DEX3_KB_STEP = 0.05
-# Left thumb1 custom target range and fixed step (3° per press)
+# Left thumb1 target range
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 50.0 * np.pi / 180.0
-THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
-# Right thumb1 custom target range and fixed step (3° per press)
-R_THUMB1_MIN_RAD = -40.0 * np.pi / 180.0
+# Right thumb1 target range
+R_THUMB1_MIN_RAD = -50.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0
-R_THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
 
-# Controller per-press edge detector state
-CONTROLLER_PREV = {
-    "la": False,  # left A (Quest left controller shows as A/B in this wrapper)
-    "lb": False,  # left B
-    "ra": False,  # right A
-    "rb": False,  # right B
-}
 def on_press(key):
     global STOP, START, RECORD_TOGGLE
     if key == 'r':
@@ -82,10 +73,10 @@ def on_press(key):
             try:
                 with LEFT_DEX3_CMD_ARRAY.get_lock():
                     cmd = np.array(LEFT_DEX3_CMD_ARRAY[:])
-                    if key == 'c':  # toward 0°
-                        cmd[1] = float(np.clip(cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                    elif key == 'v':  # toward 30°
-                        cmd[1] = float(np.clip(cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
+                    if key == 'c':
+                        cmd[1] = float(THUMB1_MIN_RAD)
+                    elif key == 'v':
+                        cmd[1] = float(THUMB1_MAX_RAD)
                     LEFT_DEX3_CMD_ARRAY[:] = cmd
             except Exception as e:
                 logger_mp.warning(f"[on_press] Failed to update left Dex3 via keyboard: {e}")
@@ -93,10 +84,10 @@ def on_press(key):
             try:
                 with RIGHT_DEX3_CMD_ARRAY.get_lock():
                     cmd = np.array(RIGHT_DEX3_CMD_ARRAY[:])
-                    if key == 'b':  # toward -30°
-                        cmd[1] = float(np.clip(cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                    elif key == 'n':  # toward 0°
-                        cmd[1] = float(np.clip(cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
+                    if key == 'b':
+                        cmd[1] = float(R_THUMB1_MAX_RAD)
+                    elif key == 'n':
+                        cmd[1] = float(R_THUMB1_MIN_RAD)
                     RIGHT_DEX3_CMD_ARRAY[:] = cmd
             except Exception as e:
                 logger_mp.warning(f"[on_press] Failed to update right Dex3 via keyboard: {e}")
@@ -244,30 +235,30 @@ if __name__ == '__main__':
             with left_dex3_cmd_q_array.get_lock():
                 # Order: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1]
                 left_init = np.array([
-                    -34.7 * np.pi / 180.0,  # thumb0 -> -34.7°
-                    0.0,                    # thumb1 -> 0° (will be controlled by c/v)
-                    0.0,                    # thumb2 -> 0°
-                    -90.0 * np.pi / 180.0,  # middle0 -> -90° (within [-90°, 0°])
-                    0.0,                    # middle1 -> 0°
-                    -90.0 * np.pi / 180.0,  # index0  -> -90° (within [-90°, 0°])
-                    0.0,                    # index1  -> 0°
+                    -34.7 * np.pi / 180.0,  # thumb0
+                    0.0,                    # thumb1 (controlled by c/v)
+                    0.0,                    # thumb2
+                    -90.0 * np.pi / 180.0,  # middle0
+                    0.0,                    # middle1
+                    -90.0 * np.pi / 180.0,  # index0
+                    0.0,                    # index1
                 ], dtype=float)
                 left_dex3_cmd_q_array[:] = left_init
             with right_dex3_cmd_q_array.get_lock():
                 # Order: [thumb0, thumb1, thumb2, index0, index1, middle0, middle1] for right array
                 # (Our right array uses same 7-length convention as left: [t0,t1,t2,m0,m1,i0,i1])
                 right_init = np.array([
-                    -34.7 * np.pi / 180.0,  # thumb0 -> -34.7°
-                    0.0,                    # thumb1 -> 0° (controlled by b/n)
-                    0.0,                    # thumb2 -> 0°
+                    -34.7 * np.pi / 180.0,  # thumb0
+                    0.0,                    # thumb1 (controlled by b/n)
+                    0.0,                    # thumb2
                     0.0,                    # middle0 (placeholder, not used)
                     0.0,                    # middle1 (placeholder, not used)
-                    90.0 * np.pi / 180.0,   # index0  -> 90°
-                    0.0,                    # index1  -> 0°
+                    90.0 * np.pi / 180.0,   # index0
+                    0.0,                    # index1
                 ], dtype=float)
-                # But we also need middle0=90°, middle1=0°. Our left-order array is [t0,t1,t2,m0,m1,i0,i1]
-                right_init[3] = 90.0 * np.pi / 180.0   # middle0 -> 90°
-                right_init[4] = 0.0                    # middle1 -> 0°
+                # Set middle finger positions for right hand
+                right_init[3] = 90.0 * np.pi / 180.0   # middle0
+                right_init[4] = 0.0                    # middle1
                 right_dex3_cmd_q_array[:] = right_init
             dual_hand_data_lock = Lock()
             dual_hand_state_array = Array('d', 14, lock = False)   # [output] current left, right hand state(14) data.
@@ -383,34 +374,22 @@ if __name__ == '__main__':
                     left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
                 with right_hand_pos_array.get_lock():
                     right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
-            elif args.ee == "dex3" and args.xr_mode == "controller":
-                # Button-based control for Dex3 joints in controller mode (per press, 3° step)
+            elif args.ee == "dex3" and args.xr_mode == "controller" and not args.headless:
+                # Dex3 controller mode - trigger control (only in non-headless mode)
                 # Read current command arrays
                 with left_dex3_cmd_q_array.get_lock():
                     left_cmd = np.array(left_dex3_cmd_q_array[:])
                 with right_dex3_cmd_q_array.get_lock():
                     right_cmd = np.array(right_dex3_cmd_q_array[:])
 
-                # Rising-edge detection using A/B buttons (commonly exposed by Quest 3)
-                la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
-                lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
-                ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
-                rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
-
-                # Left thumb1: A -> +3° (toward 30°), B -> -3° (toward 0°)
-                if la and not CONTROLLER_PREV["la"]:
-                    left_cmd[1] = float(np.clip(left_cmd[1] + THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-                if lb and not CONTROLLER_PREV["lb"]:
-                    left_cmd[1] = float(np.clip(left_cmd[1] - THUMB1_STEP_RAD, THUMB1_MIN_RAD, THUMB1_MAX_RAD))
-
-                # Right thumb1: A -> +3° (toward 0°), B -> -3° (toward -30°)
-                if ra and not CONTROLLER_PREV["ra"]:
-                    right_cmd[1] = float(np.clip(right_cmd[1] + R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-                if rb and not CONTROLLER_PREV["rb"]:
-                    right_cmd[1] = float(np.clip(right_cmd[1] - R_THUMB1_STEP_RAD, R_THUMB1_MIN_RAD, R_THUMB1_MAX_RAD))
-
-                CONTROLLER_PREV["la"], CONTROLLER_PREV["lb"] = la, lb
-                CONTROLLER_PREV["ra"], CONTROLLER_PREV["rb"] = ra, rb
+                # Trigger control for thumb1
+                # Left hand: trigger value 0.0 (open) -> 1.0 (close)
+                left_trigger = tele_data.left_trigger_value if tele_data.left_trigger_value is not None else 0.0
+                left_cmd[1] = float(THUMB1_MIN_RAD + left_trigger * (THUMB1_MAX_RAD - THUMB1_MIN_RAD))
+                
+                # Right hand: trigger value 0.0 (open) -> 1.0 (close)  
+                right_trigger = tele_data.right_trigger_value if tele_data.right_trigger_value is not None else 0.0
+                right_cmd[1] = float(R_THUMB1_MAX_RAD + right_trigger * (R_THUMB1_MIN_RAD - R_THUMB1_MAX_RAD))
 
                 # Final safety clipping for all joints
                 left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
