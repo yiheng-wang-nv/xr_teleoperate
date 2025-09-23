@@ -54,10 +54,10 @@ DEX3_LEFT_LIMITS = {
 DEX3_KB_STEP = 0.05
 # Left thumb1 custom target range and fixed step (3° per press)
 THUMB1_MIN_RAD = 0.0
-THUMB1_MAX_RAD = 30.0 * np.pi / 180.0
+THUMB1_MAX_RAD = 50.0 * np.pi / 180.0
 THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
 # Right thumb1 custom target range and fixed step (3° per press)
-R_THUMB1_MIN_RAD = -30.0 * np.pi / 180.0
+R_THUMB1_MIN_RAD = -40.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0
 R_THUMB1_STEP_RAD = 3.0 * np.pi / 180.0
 
@@ -170,12 +170,12 @@ if __name__ == '__main__':
         else:
             img_config = {
                 'fps': 30,
-                'head_camera_type': 'opencv',
-                'head_camera_image_shape': [480, 1280],  # Head camera resolution
-                'head_camera_id_numbers': [0],
+                'head_camera_type': 'realsense',
+                'head_camera_image_shape': [480, 640],
+                'head_camera_id_numbers': ['243222073978'],
                 'wrist_camera_type': 'opencv',
-                'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-                'wrist_camera_id_numbers': [2, 4],
+                'wrist_camera_image_shape': [480, 640],
+                'wrist_camera_id_numbers': [6],
             }
 
 
@@ -257,7 +257,7 @@ if __name__ == '__main__':
                 # Order: [thumb0, thumb1, thumb2, index0, index1, middle0, middle1] for right array
                 # (Our right array uses same 7-length convention as left: [t0,t1,t2,m0,m1,i0,i1])
                 right_init = np.array([
-                    -25.4 * np.pi / 180.0,  # thumb0 -> -25.4°
+                    -34.7 * np.pi / 180.0,  # thumb0 -> -34.7°
                     0.0,                    # thumb1 -> 0° (controlled by b/n)
                     0.0,                    # thumb2 -> 0°
                     0.0,                    # middle0 (placeholder, not used)
