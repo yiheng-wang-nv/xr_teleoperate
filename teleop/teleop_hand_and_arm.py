@@ -65,18 +65,24 @@ CONTROLLER_PREV = {
     "lb": False,  # left B
     "ra": False,  # right A
     "rb": False,  # right B
+    "lt": False,  # left trigger (index finger button)
+    "rt": False,  # right trigger (index finger button)
 }
 
 def on_press(key):
     global STOP, START, RECORD_TOGGLE
     if key == 'r':
-        START = True
+        START = not START
+        logger_mp.info(f"[on_press] START -> {START}")
     elif key == 'q':
         STOP = True
     elif key == 's' and START == True:
         RECORD_TOGGLE = True
     else:
-        # Keyboard: left thumb1 c/v, right thumb1 b/n
+        # Keyboard: left thumb1 c/v, right thumb1 b/n (only when START is True)
+        if not START:
+            logger_mp.debug("[on_press] START=False; ignore manual finger key")
+            return
         if key in ('c','v') and LEFT_DEX3_CMD_ARRAY is not None:
             try:
                 with LEFT_DEX3_CMD_ARRAY.get_lock():
@@ -339,125 +345,146 @@ if __name__ == '__main__':
             recorder = EpisodeWriter(task_dir = args.task_dir + args.task_name, task_goal = args.task_desc, frequency = args.frequency, rerun_log = True)
 
 
-        logger_mp.info("Please enter the start signal (enter 'r' to start the subsequent program)")
-        while not START and not STOP:
-            time.sleep(0.01)
-        logger_mp.info("start program.")
-        arm_ctrl.speed_gradual_max()
+        logger_mp.info("Press 'r' to start/resume, 'r' again to pause, 'q' to exit.")
         while not STOP:
-            start_time = time.time()
+            # Wait until START is True or STOP requested
+            while not START and not STOP:
+                time.sleep(0.01)
+            if STOP:
+                break
+            logger_mp.info("start program.")
+            arm_ctrl.speed_gradual_max()
+            while START and not STOP:
+                start_time = time.time()
 
-            if not args.headless:
-                tv_resized_image = cv2.resize(tv_img_array, (tv_img_shape[1] // 2, tv_img_shape[0] // 2))
-                cv2.imshow("record image", tv_resized_image)
-                # opencv GUI communication
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    STOP = True
-                    if args.sim:
-                        publish_reset_category(2, reset_pose_publisher)
-                elif key == ord('s'):
-                    RECORD_TOGGLE = True
-                elif key == ord('a'):
-                    if args.sim:
-                        publish_reset_category(2, reset_pose_publisher)
+                if not args.headless:
+                    tv_resized_image = cv2.resize(tv_img_array, (tv_img_shape[1] // 2, tv_img_shape[0] // 2))
+                    cv2.imshow("record image", tv_resized_image)
+                    # opencv GUI communication
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        STOP = True
+                        if args.sim:
+                            publish_reset_category(2, reset_pose_publisher)
+                    elif key == ord('s'):
+                        RECORD_TOGGLE = True
+                    elif key == ord('a'):
+                        if args.sim:
+                            publish_reset_category(2, reset_pose_publisher)
+                    # Note: 'r' is handled by the keyboard/IPC handler to avoid double toggles here
 
-            if args.record and RECORD_TOGGLE:
-                RECORD_TOGGLE = False
-                if not RECORD_RUNNING:
-                    if recorder.create_episode():
-                        RECORD_RUNNING = True
+                if args.record and RECORD_TOGGLE:
+                    RECORD_TOGGLE = False
+                    if not RECORD_RUNNING:
+                        if recorder.create_episode():
+                            RECORD_RUNNING = True
+                        else:
+                            logger_mp.error("Failed to create episode. Recording not started.")
                     else:
-                        logger_mp.error("Failed to create episode. Recording not started.")
+                        RECORD_RUNNING = False
+                        recorder.save_episode()
+                        if args.sim:
+                            publish_reset_category(1, reset_pose_publisher)
+                # get input data
+                tele_data = tv_wrapper.get_motion_state_data()
+                # Controller bindings using index-finger triggers (no joystick buttons)
+                if args.xr_mode == "controller":
+                    lt = bool(getattr(tele_data.tele_state, 'left_trigger_state', False))
+                    rt = bool(getattr(tele_data.tele_state, 'right_trigger_state', False))
+                    # Left trigger rising edge -> toggle START
+                    if lt and not CONTROLLER_PREV.get("lt", False):
+                        prev = START
+                        START = not START
+                        if prev != START:
+                            logger_mp.info(f"[controller] START -> {START}")
+                    # Right trigger rising edge -> toggle RECORD when running
+                    if START and rt and not CONTROLLER_PREV.get("rt", False):
+                        RECORD_TOGGLE = True
+                        logger_mp.info("[controller] RECORD_TOGGLE -> True")
+                    # Update previous states
+                    CONTROLLER_PREV["lt"], CONTROLLER_PREV["rt"] = lt, rt
+                if (args.ee == "dex3" or args.ee == "inspire1" or args.ee == "brainco") and args.xr_mode == "hand":
+                    with left_hand_pos_array.get_lock():
+                        left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
+                    with right_hand_pos_array.get_lock():
+                        right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
+                elif args.ee == "dex3" and args.xr_mode == "controller":
+                    # Dex3 controller mode - A/B button control
+                    # Read current command arrays
+                    with left_dex3_cmd_q_array.get_lock():
+                        left_cmd = np.array(left_dex3_cmd_q_array[:])
+                    with right_dex3_cmd_q_array.get_lock():
+                        right_cmd = np.array(right_dex3_cmd_q_array[:])
+
+                    # A/B button detection
+                    la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
+                    lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
+                    ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
+                    rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
+
+                    if la and not CONTROLLER_PREV.get("la", False):
+                        left_cmd[1] = float(THUMB1_MAX_RAD)
+                    if lb and not CONTROLLER_PREV.get("lb", False):
+                        left_cmd[1] = float(THUMB1_MIN_RAD)
+
+                    if ra and not CONTROLLER_PREV.get("ra", False):
+                        right_cmd[1] = float(R_THUMB1_MIN_RAD)
+                    if rb and not CONTROLLER_PREV.get("rb", False):
+                        right_cmd[1] = float(R_THUMB1_MAX_RAD)
+
+                    # Update previous state
+                    CONTROLLER_PREV["la"], CONTROLLER_PREV["lb"] = la, lb
+                    CONTROLLER_PREV["ra"], CONTROLLER_PREV["rb"] = ra, rb
+
+                    # Final safety clipping for all joints
+                    left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
+                    left_cmd[1] = np.clip(left_cmd[1], *DEX3_LEFT_LIMITS["thumb1"])
+                    left_cmd[2] = np.clip(left_cmd[2], *DEX3_LEFT_LIMITS["thumb2"])
+
+                    with left_dex3_cmd_q_array.get_lock():
+                        left_dex3_cmd_q_array[:] = left_cmd
+                    with right_dex3_cmd_q_array.get_lock():
+                        right_dex3_cmd_q_array[:] = right_cmd
+                elif args.ee == "dex1" and args.xr_mode == "controller":
+                    with left_gripper_value.get_lock():
+                        left_gripper_value.value = tele_data.left_trigger_value
+                    with right_gripper_value.get_lock():
+                        right_gripper_value.value = tele_data.right_trigger_value
+                elif args.ee == "dex1" and args.xr_mode == "hand":
+                    with left_gripper_value.get_lock():
+                        left_gripper_value.value = tele_data.left_pinch_value
+                    with right_gripper_value.get_lock():
+                        right_gripper_value.value = tele_data.right_pinch_value
                 else:
-                    RECORD_RUNNING = False
-                    recorder.save_episode()
-                    if args.sim:
-                        publish_reset_category(1, reset_pose_publisher)
-            # get input data
-            tele_data = tv_wrapper.get_motion_state_data()
-            if (args.ee == "dex3" or args.ee == "inspire1" or args.ee == "brainco") and args.xr_mode == "hand":
-                with left_hand_pos_array.get_lock():
-                    left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
-                with right_hand_pos_array.get_lock():
-                    right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
-            elif args.ee == "dex3" and args.xr_mode == "controller":
-                # Dex3 controller mode - A/B button control
-                # Read current command arrays
-                with left_dex3_cmd_q_array.get_lock():
-                    left_cmd = np.array(left_dex3_cmd_q_array[:])
-                with right_dex3_cmd_q_array.get_lock():
-                    right_cmd = np.array(right_dex3_cmd_q_array[:])
-
-                # A/B button detection
-                la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
-                lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
-                ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
-                rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
-
-                if la and not CONTROLLER_PREV.get("la", False):
-                    left_cmd[1] = float(THUMB1_MAX_RAD)
-                if lb and not CONTROLLER_PREV.get("lb", False):
-                    left_cmd[1] = float(THUMB1_MIN_RAD)
-
-                if ra and not CONTROLLER_PREV.get("ra", False):
-                    right_cmd[1] = float(R_THUMB1_MIN_RAD)
-                if rb and not CONTROLLER_PREV.get("rb", False):
-                    right_cmd[1] = float(R_THUMB1_MAX_RAD)
-
-                # Update previous state
-                CONTROLLER_PREV["la"], CONTROLLER_PREV["lb"] = la, lb
-                CONTROLLER_PREV["ra"], CONTROLLER_PREV["rb"] = ra, rb
-
-                # Final safety clipping for all joints
-                left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
-                left_cmd[1] = np.clip(left_cmd[1], *DEX3_LEFT_LIMITS["thumb1"])
-                left_cmd[2] = np.clip(left_cmd[2], *DEX3_LEFT_LIMITS["thumb2"])
-
-                with left_dex3_cmd_q_array.get_lock():
-                    left_dex3_cmd_q_array[:] = left_cmd
-                with right_dex3_cmd_q_array.get_lock():
-                    right_dex3_cmd_q_array[:] = right_cmd
-            elif args.ee == "dex1" and args.xr_mode == "controller":
-                with left_gripper_value.get_lock():
-                    left_gripper_value.value = tele_data.left_trigger_value
-                with right_gripper_value.get_lock():
-                    right_gripper_value.value = tele_data.right_trigger_value
-            elif args.ee == "dex1" and args.xr_mode == "hand":
-                with left_gripper_value.get_lock():
-                    left_gripper_value.value = tele_data.left_pinch_value
-                with right_gripper_value.get_lock():
-                    right_gripper_value.value = tele_data.right_pinch_value
-            else:
-                pass        
+                    pass        
             
-            # high level control
-            if args.xr_mode == "controller" and args.motion:
-                # quit teleoperate
-                if tele_data.tele_state.right_aButton:
-                    STOP = True
-                # command robot to enter damping mode. soft emergency stop function
-                if tele_data.tele_state.left_thumbstick_state and tele_data.tele_state.right_thumbstick_state:
-                    sport_client.Damp()
-                # control, limit velocity to within 0.3
-                sport_client.Move(-tele_data.tele_state.left_thumbstick_value[1]  * 0.3,
-                                  -tele_data.tele_state.left_thumbstick_value[0]  * 0.3,
-                                  -tele_data.tele_state.right_thumbstick_value[0] * 0.3)
+                # high level control
+                if args.xr_mode == "controller" and args.motion:
+                    # quit teleoperate
+                    if tele_data.tele_state.right_aButton:
+                        STOP = True
+                    # command robot to enter damping mode. soft emergency stop function
+                    if tele_data.tele_state.left_thumbstick_state and tele_data.tele_state.right_thumbstick_state:
+                        sport_client.Damp()
+                    # control, limit velocity to within 0.3
+                    sport_client.Move(-tele_data.tele_state.left_thumbstick_value[1]  * 0.3,
+                                      -tele_data.tele_state.left_thumbstick_value[0]  * 0.3,
+                                      -tele_data.tele_state.right_thumbstick_value[0] * 0.3)
 
-            # get current robot state data.
-            current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()
-            current_lr_arm_dq = arm_ctrl.get_current_dual_arm_dq()
+                # get current robot state data.
+                current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()
+                current_lr_arm_dq = arm_ctrl.get_current_dual_arm_dq()
 
-            # solve ik using motor data and wrist pose, then use ik results to control arms.
-            time_ik_start = time.time()
-            sol_q, sol_tauff  = arm_ik.solve_ik(tele_data.left_arm_pose, tele_data.right_arm_pose, current_lr_arm_q, current_lr_arm_dq)
-            time_ik_end = time.time()
-            logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
-            arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
+                # solve ik using motor data and wrist pose, then use ik results to control arms.
+                time_ik_start = time.time()
+                sol_q, sol_tauff  = arm_ik.solve_ik(tele_data.left_arm_pose, tele_data.right_arm_pose, current_lr_arm_q, current_lr_arm_dq)
+                time_ik_end = time.time()
+                logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
+                arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
 
-            # record data
-            if args.record:
-                RECORD_READY = recorder.is_ready()
+                # record data
+                if args.record:
+                    RECORD_READY = recorder.is_ready()
                 # dex hand or gripper
                 if args.ee == "dex3" and args.xr_mode == "hand":
                     with dual_hand_data_lock:
@@ -589,11 +616,20 @@ if __name__ == '__main__':
                     else:
                         recorder.add_item(colors=colors, depths=depths, states=states, actions=actions)
 
-            current_time = time.time()
-            time_elapsed = current_time - start_time
-            sleep_time = max(0, (1 / args.frequency) - time_elapsed)
-            time.sleep(sleep_time)
-            logger_mp.debug(f"main process sleep: {sleep_time}")
+                current_time = time.time()
+                time_elapsed = current_time - start_time
+                sleep_time = max(0, (1 / args.frequency) - time_elapsed)
+                time.sleep(sleep_time)
+                logger_mp.debug(f"main process sleep: {sleep_time}")
+
+            if not STOP:
+                logger_mp.info("Paused. Waiting for 'r' to resume or 'q' to exit.")
+                # Stop residual body motion in controller+motion mode
+                if args.xr_mode == "controller" and args.motion:
+                    try:
+                        sport_client.Move(0.0, 0.0, 0.0)
+                    except Exception:
+                        pass
 
     except KeyboardInterrupt:
         logger_mp.info("KeyboardInterrupt, exiting program...")
