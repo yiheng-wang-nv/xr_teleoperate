@@ -345,10 +345,21 @@ if __name__ == '__main__':
             recorder = EpisodeWriter(task_dir = args.task_dir + args.task_name, task_goal = args.task_desc, frequency = args.frequency, rerun_log = True)
 
 
-        logger_mp.info("Press 'r' to start/resume, 'r' again to pause, 'q' to exit.")
+        logger_mp.info("Press 'r' or Left Trigger to start/resume; 'r'/LT again to pause; 'q' to exit.")
         while not STOP:
             # Wait until START is True or STOP requested
             while not START and not STOP:
+                # Allow controller Left Trigger to resume from pause
+                if args.xr_mode == "controller":
+                    try:
+                        tele_data = tv_wrapper.get_motion_state_data()
+                        lt = bool(getattr(tele_data.tele_state, 'left_trigger_state', False))
+                        if lt and not CONTROLLER_PREV.get("lt", False):
+                            START = True
+                            logger_mp.info("[controller] START -> True")
+                        CONTROLLER_PREV["lt"] = lt
+                    except Exception:
+                        pass
                 time.sleep(0.01)
             if STOP:
                 break
