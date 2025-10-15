@@ -134,6 +134,8 @@ if __name__ == '__main__':
     parser.add_argument('--frequency', type = float, default = 30.0, help = 'save data\'s frequency')
 
     # basic control parameters
+    parser.add_argument('--right-idx-middle-0-angle', type = float, default = 60.0, help = 'right index 0 and middle 0 finger angle')
+    parser.add_argument('--right-idx-middle-1-angle', type = float, default = 40.0, help = 'right index 1 and middle 1 finger angle')
     parser.add_argument('--xr-mode', type=str, choices=['hand', 'controller'], default='hand', help='Select XR device tracking source')
     parser.add_argument('--arm', type=str, choices=['G1_29', 'G1_23', 'H1_2', 'H1'], default='G1_29', help='Select arm controller')
     parser.add_argument('--ee', type=str, choices=['dex1', 'dex3', 'inspire1', 'brainco'], help='Select end effector controller')
@@ -147,6 +149,7 @@ if __name__ == '__main__':
     parser.add_argument('--task-dir', type = str, default = './utils/data/', help = 'path to save data')
     parser.add_argument('--task-name', type = str, default = 'pickup_tools', help = 'task name for recording')
     parser.add_argument('--task-desc', type = str, default = 'pick the tools from the left plate in order and place them in the right plate.', help = 'task goal for recording')
+
 
     args = parser.parse_args()
     logger_mp.info(f"args: {args}")
@@ -258,18 +261,16 @@ if __name__ == '__main__':
                     -40.0 * np.pi / 180.0,  # index1
                 ], dtype=float)
                 left_dex3_cmd_q_array[:] = left_init
+            # right hand has different order
             with right_dex3_cmd_q_array.get_lock():
-                # Order: [thumb0, thumb1, thumb2, index0, index1, middle0, middle1] for right array
-                # (Our right array uses same 7-length convention as left: [t0,t1,t2,m0,m1,i0,i1])
                 right_init = np.array([
                     -27.5 * np.pi / 180.0,  # thumb0
-                    # 0.0 * np.pi / 180.0,  # thumb0
                     0.0,                    # thumb1 (controlled by b/n)
                     0.0,                    # thumb2
-                    60.0 * np.pi / 180.0,   # middle0 (placeholder, not used)
-                    40.0 * np.pi / 180.0,   # middle1 (placeholder, not used)
-                    60.0 * np.pi / 180.0,   # index0
-                    40.0 * np.pi / 180.0,   # index1
+                    args.right_idx_middle_0_angle * np.pi / 180.0,   # index0
+                    args.right_idx_middle_1_angle * np.pi / 180.0,   # index1
+                    args.right_idx_middle_1_angle * np.pi / 180.0,   # middle0
+                    args.right_idx_middle_1_angle * np.pi / 180.0,   # middle1
                 ], dtype=float)
                 # Set middle finger positions for right hand
                 right_dex3_cmd_q_array[:] = right_init
