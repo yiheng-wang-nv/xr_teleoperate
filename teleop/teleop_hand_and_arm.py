@@ -249,7 +249,7 @@ if __name__ == '__main__':
             with left_dex3_cmd_q_array.get_lock():
                 # Order: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1]
                 left_init = np.array([
-                    -27.5 * np.pi / 180.0,  # thumb0
+                    0.0 * np.pi / 180.0,  # thumb0
                     0.0,                    # thumb1 (controlled by c/v)
                     0.0,                    # thumb2
                     -60.0 * np.pi / 180.0,  # middle0
@@ -262,8 +262,8 @@ if __name__ == '__main__':
                 # Order: [thumb0, thumb1, thumb2, index0, index1, middle0, middle1] for right array
                 # (Our right array uses same 7-length convention as left: [t0,t1,t2,m0,m1,i0,i1])
                 right_init = np.array([
-                    -27.5 * np.pi / 180.0,  # thumb0
-                    # 0.0 * np.pi / 180.0,  # thumb0
+                    # -15 * np.pi / 180.0,  # thumb0
+                    0.0 * np.pi / 180.0,  # thumb0
                     0.0,                    # thumb1 (controlled by b/n)
                     0.0,                    # thumb2
                     60.0 * np.pi / 180.0,   # middle0 (placeholder, not used)
