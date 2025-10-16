@@ -269,7 +269,7 @@ if __name__ == '__main__':
                     0.0,                    # thumb2
                     args.right_idx_middle_0_angle * np.pi / 180.0,   # index0
                     args.right_idx_middle_1_angle * np.pi / 180.0,   # index1
-                    args.right_idx_middle_1_angle * np.pi / 180.0,   # middle0
+                    args.right_idx_middle_0_angle * np.pi / 180.0,   # middle0
                     args.right_idx_middle_1_angle * np.pi / 180.0,   # middle1
                 ], dtype=float)
                 # Set middle finger positions for right hand
