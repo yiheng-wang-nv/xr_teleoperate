@@ -35,7 +35,7 @@ kTopicDex3RightState = "rt/dex3/right/state"
 class Dex3_1_Controller:
     def __init__(self, left_hand_array_in, right_hand_array_in, dual_hand_data_lock = None, dual_hand_state_array_out = None,
                        dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False,
-                       left_cmd_q_in = None, right_cmd_q_in = None):
+                       left_cmd_q_in = None, right_cmd_q_in = None, disable_clamp = True):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -54,12 +54,15 @@ class Dex3_1_Controller:
         Unit_Test: Whether to enable unit testing
 
         simulation_mode: Whether to use simulation mode (default is False, which means using real robot)
+        disable_clamp: When True (default), enable dwell-based relaxation that adjusts targets to measured positions after contact.
+                       When False, keep commanded targets without relaxation (tighter grip on small objects).
         """
         logger_mp.info("Initialize Dex3_1_Controller...")
 
         self.fps = fps
         self.Unit_Test = Unit_Test
         self.simulation_mode = simulation_mode
+        self.disable_clamp = disable_clamp
         if not self.Unit_Test:
             self.hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3)
         else:
@@ -179,11 +182,11 @@ class Dex3_1_Controller:
             self.right_msg.motor_cmd[id].kp   = kp
             self.right_msg.motor_cmd[id].kd   = kd  
 
-        # dwell-based clamp configuration (for controller mode)
+        # dwell-based relaxation configuration (for controller mode)
         DWELL_TIME_S = 1.0
         MOVE_EPS_RAD = 0.005
         CLAMP_ERR_RAD = 0.02
-        SQUEEZE_OFFSET_RAD = 0.03  # small preload added on thumbs when clamped
+        SQUEEZE_OFFSET_RAD = 0.03  # small preload added on thumbs when relaxed to contact
 
         # track last movement for dwell detection (per joint)
         left_last_pos = np.zeros(Dex3_Num_Motors)
@@ -197,18 +200,22 @@ class Dex3_1_Controller:
                                      last_cmd: np.ndarray, last_cmd_change_time: np.ndarray,
                                      squeeze_signs: np.ndarray, squeeze_offset: float,
                                      dwell_s: float, move_eps: float, err_eps: float,
+                                     clamp_mask: np.ndarray,
                                      now_ts: float) -> Tuple[np.ndarray, bool]:
-            """Clamp per-joint target to measured value if no motion for dwell_s and error > err_eps.
+            """Relax per-joint target to measured value if no motion for dwell_s and error > err_eps.
             Returns (new_target, changed_flag)."""
             changed = False
             for j in range(Dex3_Num_Motors):
                 if abs(current_q[j] - last_pos[j]) > move_eps:
                     last_change_time[j] = now_ts
                     last_pos[j] = current_q[j]
-                # Only clamp when both motion and command have been stable for dwell time
+                # Only consider relaxation for joints that are enabled via mask
+                if not bool(clamp_mask[j]):
+                    continue
+                # Only relax when both motion and command have been stable for dwell time
                 if (now_ts - last_change_time[j]) >= dwell_s and (now_ts - last_cmd_change_time[j]) >= dwell_s \
                    and abs(target_q[j] - current_q[j]) > err_eps:
-                    # clamp to measured, plus optional preload for thumbs via squeeze_signs
+                    # relax to measured, plus optional preload for thumbs via squeeze_signs
                     if squeeze_signs[j] != 0.0:
                         target_q[j] = float(current_q[j] + squeeze_signs[j] * squeeze_offset)
                     else:
@@ -216,7 +223,7 @@ class Dex3_1_Controller:
                     changed = True
             return target_q, changed
 
-        # one-shot arming per hand: only clamp once after a command press event (e.g., la/lb/ra/rb)
+        # one-shot arming per hand: only relax once after a command press event (e.g., la/lb/ra/rb)
         left_armed = False
         right_armed = False
 
@@ -261,7 +268,7 @@ class Dex3_1_Controller:
                     except Exception as e:
                         logger_mp.warning(f"[Dex3_1_Controller] Failed to read cmd arrays: {e}")
 
-                    # Track command changes to avoid clamping immediately after a new command
+                    # Track command changes to avoid relaxation immediately after a new command
                     CMD_CHANGE_EPS_RAD = 1e-4
                     try:
                         last_left_cmd
@@ -281,7 +288,7 @@ class Dex3_1_Controller:
                             last_right_cmd[j] = right_q_target[j]
                             right_armed = True
 
-                    # dwell-based contact clamp for all joints on both hands
+                    # dwell-based contact relaxation for all joints on both hands
                     tnow = time.time()
                     # define per-joint squeeze directions: + for closing, - for opening
                     # Only thumbs (joint index 0/1/2) are given preload; we apply on thumb1 (index 1) here
@@ -289,6 +296,9 @@ class Dex3_1_Controller:
                     right_squeeze_signs = np.zeros(Dex3_Num_Motors)
                     left_squeeze_signs[1] = 1.0   # left thumb1 close direction assumed positive
                     right_squeeze_signs[1] = -1.0 # right thumb1 close direction assumed negative
+                    # Build per-joint relaxation masks: enable or disable across all joints via disable_clamp
+                    left_clamp_mask = np.full(Dex3_Num_Motors, self.disable_clamp, dtype=bool)
+                    right_clamp_mask = np.full(Dex3_Num_Motors, self.disable_clamp, dtype=bool)
                     left_changed = False
                     right_changed = False
                     if left_armed:
@@ -296,14 +306,14 @@ class Dex3_1_Controller:
                             current_left_q, left_q_target, left_last_pos, left_last_change_time,
                             last_left_cmd, left_cmd_last_change_time,
                             left_squeeze_signs, SQUEEZE_OFFSET_RAD,
-                            DWELL_TIME_S, MOVE_EPS_RAD, CLAMP_ERR_RAD, tnow
+                            DWELL_TIME_S, MOVE_EPS_RAD, CLAMP_ERR_RAD, left_clamp_mask, tnow
                         )
                     if right_armed:
                         right_q_target, right_changed = clamp_targets_with_dwell(
                             current_right_q, right_q_target, right_last_pos, right_last_change_time,
                             last_right_cmd, right_cmd_last_change_time,
                             right_squeeze_signs, SQUEEZE_OFFSET_RAD,
-                            DWELL_TIME_S, MOVE_EPS_RAD, CLAMP_ERR_RAD, tnow
+                            DWELL_TIME_S, MOVE_EPS_RAD, CLAMP_ERR_RAD, right_clamp_mask, tnow
                         )
                     # If any joint changed, write back atomically per hand
                     if left_changed:

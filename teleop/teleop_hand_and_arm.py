@@ -56,8 +56,8 @@ DEX3_KB_STEP = 0.05
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 55.0 * np.pi / 180.0
 # Right thumb1 target range
-R_THUMB1_MIN_RAD = -55.0 * np.pi / 180.0
-R_THUMB1_MAX_RAD = 0.0
+R_THUMB1_MIN_RAD = -45.0 * np.pi / 180.0
+R_THUMB1_MAX_RAD = 0.0 * np.pi / 180.0
 
 # Controller per-press edge detector state
 CONTROLLER_PREV = {
@@ -139,6 +139,12 @@ if __name__ == '__main__':
     parser.add_argument('--xr-mode', type=str, choices=['hand', 'controller'], default='hand', help='Select XR device tracking source')
     parser.add_argument('--arm', type=str, choices=['G1_29', 'G1_23', 'H1_2', 'H1'], default='G1_29', help='Select arm controller')
     parser.add_argument('--ee', type=str, choices=['dex1', 'dex3', 'inspire1', 'brainco'], help='Select end effector controller')
+    # dex3 clamp options
+    parser.add_argument('--disable-clamp', dest='disable_clamp', action='store_true',
+                        help='After dwell, relax targets to measured positions (may reduce grip on small objects)')
+    parser.add_argument('--enable-clamp', dest='disable_clamp', action='store_false',
+                        help='Do not relax targets to measured positions (keep commanded targets)')
+    parser.set_defaults(disable_clamp=True)
     # mode flags
     parser.add_argument('--motion', action = 'store_true', help = 'Enable motion control mode')
     parser.add_argument('--headless', action='store_true', help='Enable headless mode (no display)')
@@ -278,7 +284,7 @@ if __name__ == '__main__':
             dual_hand_state_array = Array('d', 14, lock = False)   # [output] current left, right hand state(14) data.
             dual_hand_action_array = Array('d', 14, lock = False)  # [output] current left, right hand action(14) data.
             hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim,
-                                          left_cmd_q_in=left_dex3_cmd_q_array, right_cmd_q_in=right_dex3_cmd_q_array)
+                                          left_cmd_q_in=left_dex3_cmd_q_array, right_cmd_q_in=right_dex3_cmd_q_array, disable_clamp=args.disable_clamp)
             # expose arrays for keyboard handler
             LEFT_DEX3_CMD_ARRAY = left_dex3_cmd_q_array
             RIGHT_DEX3_CMD_ARRAY = right_dex3_cmd_q_array
