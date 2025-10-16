@@ -9,6 +9,7 @@ from unitree_sdk2py.idl.default import unitree_go_msg_dds__MotorCmd_
 
 import numpy as np
 from enum import IntEnum
+from typing import Tuple
 import time
 import os
 import sys
@@ -33,7 +34,8 @@ kTopicDex3RightState = "rt/dex3/right/state"
 
 class Dex3_1_Controller:
     def __init__(self, left_hand_array_in, right_hand_array_in, dual_hand_data_lock = None, dual_hand_state_array_out = None,
-                       dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False):
+                       dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False,
+                       left_cmd_q_in = None, right_cmd_q_in = None):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -96,7 +98,7 @@ class Dex3_1_Controller:
         logger_mp.info("[Dex3_1_Controller] Subscribe dds ok.")
 
         hand_control_process = Process(target=self.control_process, args=(left_hand_array_in, right_hand_array_in,  self.left_hand_state_array, self.right_hand_state_array,
-                                                                          dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out))
+                                                                          dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out, left_cmd_q_in, right_cmd_q_in))
         hand_control_process.daemon = True
         hand_control_process.start()
 
@@ -140,7 +142,8 @@ class Dex3_1_Controller:
         # logger_mp.debug("hand ctrl publish ok.")
     
     def control_process(self, left_hand_array_in, right_hand_array_in, left_hand_state_array, right_hand_state_array,
-                              dual_hand_data_lock = None, dual_hand_state_array_out = None, dual_hand_action_array_out = None):
+                              dual_hand_data_lock = None, dual_hand_state_array_out = None, dual_hand_action_array_out = None,
+                              left_cmd_q_in = None, right_cmd_q_in = None):
         self.running = True
 
         left_q_target  = np.full(Dex3_Num_Motors, 0)
@@ -176,6 +179,47 @@ class Dex3_1_Controller:
             self.right_msg.motor_cmd[id].kp   = kp
             self.right_msg.motor_cmd[id].kd   = kd  
 
+        # dwell-based clamp configuration (for controller mode)
+        DWELL_TIME_S = 1.0
+        MOVE_EPS_RAD = 0.005
+        CLAMP_ERR_RAD = 0.02
+        SQUEEZE_OFFSET_RAD = 0.03  # small preload added on thumbs when clamped
+
+        # track last movement for dwell detection (per joint)
+        left_last_pos = np.zeros(Dex3_Num_Motors)
+        right_last_pos = np.zeros(Dex3_Num_Motors)
+        left_last_change_time = np.full(Dex3_Num_Motors, time.time())
+        right_last_change_time = np.full(Dex3_Num_Motors, time.time())
+        last_init = False
+
+        def clamp_targets_with_dwell(current_q: np.ndarray, target_q: np.ndarray,
+                                     last_pos: np.ndarray, last_change_time: np.ndarray,
+                                     last_cmd: np.ndarray, last_cmd_change_time: np.ndarray,
+                                     squeeze_signs: np.ndarray, squeeze_offset: float,
+                                     dwell_s: float, move_eps: float, err_eps: float,
+                                     now_ts: float) -> Tuple[np.ndarray, bool]:
+            """Clamp per-joint target to measured value if no motion for dwell_s and error > err_eps.
+            Returns (new_target, changed_flag)."""
+            changed = False
+            for j in range(Dex3_Num_Motors):
+                if abs(current_q[j] - last_pos[j]) > move_eps:
+                    last_change_time[j] = now_ts
+                    last_pos[j] = current_q[j]
+                # Only clamp when both motion and command have been stable for dwell time
+                if (now_ts - last_change_time[j]) >= dwell_s and (now_ts - last_cmd_change_time[j]) >= dwell_s \
+                   and abs(target_q[j] - current_q[j]) > err_eps:
+                    # clamp to measured, plus optional preload for thumbs via squeeze_signs
+                    if squeeze_signs[j] != 0.0:
+                        target_q[j] = float(current_q[j] + squeeze_signs[j] * squeeze_offset)
+                    else:
+                        target_q[j] = float(current_q[j])
+                    changed = True
+            return target_q, changed
+
+        # one-shot arming per hand: only clamp once after a command press event (e.g., la/lb/ra/rb)
+        left_armed = False
+        right_armed = False
+
         try:
             while self.running:
                 start_time = time.time()
@@ -187,6 +231,18 @@ class Dex3_1_Controller:
 
                 # Read left and right q_state from shared arrays
                 state_data = np.concatenate((np.array(left_hand_state_array[:]), np.array(right_hand_state_array[:])))
+                # split for easier access
+                current_left_q = state_data[:Dex3_Num_Motors]
+                current_right_q = state_data[Dex3_Num_Motors:]
+
+                # initialize last pos on first valid read
+                if not last_init:
+                    left_last_pos = current_left_q.copy()
+                    right_last_pos = current_right_q.copy()
+                    tnow = time.time()
+                    left_last_change_time[:] = tnow
+                    right_last_change_time[:] = tnow
+                    last_init = True
 
                 if not np.all(right_hand_data == 0.0) and not np.all(left_hand_data[4] == np.array([-1.13, 0.3, 0.15])): # if hand data has been initialized.
                     ref_left_value = left_hand_data[self.hand_retargeting.left_indices[1,:]] - left_hand_data[self.hand_retargeting.left_indices[0,:]]
@@ -194,6 +250,76 @@ class Dex3_1_Controller:
 
                     left_q_target  = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
                     right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
+
+                # If explicit joint commands are provided (controller mode), override targets
+                if left_cmd_q_in is not None and right_cmd_q_in is not None:
+                    try:
+                        with left_cmd_q_in.get_lock():
+                            left_q_target = np.array(left_cmd_q_in[:]).copy()
+                        with right_cmd_q_in.get_lock():
+                            right_q_target = np.array(right_cmd_q_in[:]).copy()
+                    except Exception as e:
+                        logger_mp.warning(f"[Dex3_1_Controller] Failed to read cmd arrays: {e}")
+
+                    # Track command changes to avoid clamping immediately after a new command
+                    CMD_CHANGE_EPS_RAD = 1e-4
+                    try:
+                        last_left_cmd
+                    except NameError:
+                        last_left_cmd = left_q_target.copy()
+                        last_right_cmd = right_q_target.copy()
+                        left_cmd_last_change_time = np.full(Dex3_Num_Motors, time.time())
+                        right_cmd_last_change_time = np.full(Dex3_Num_Motors, time.time())
+                    tnow = time.time()
+                    for j in range(Dex3_Num_Motors):
+                        if abs(left_q_target[j] - last_left_cmd[j]) > CMD_CHANGE_EPS_RAD:
+                            left_cmd_last_change_time[j] = tnow
+                            last_left_cmd[j] = left_q_target[j]
+                            left_armed = True
+                        if abs(right_q_target[j] - last_right_cmd[j]) > CMD_CHANGE_EPS_RAD:
+                            right_cmd_last_change_time[j] = tnow
+                            last_right_cmd[j] = right_q_target[j]
+                            right_armed = True
+
+                    # dwell-based contact clamp for all joints on both hands
+                    tnow = time.time()
+                    # define per-joint squeeze directions: + for closing, - for opening
+                    # Only thumbs (joint index 0/1/2) are given preload; we apply on thumb1 (index 1) here
+                    left_squeeze_signs = np.zeros(Dex3_Num_Motors)
+                    right_squeeze_signs = np.zeros(Dex3_Num_Motors)
+                    left_squeeze_signs[1] = 1.0   # left thumb1 close direction assumed positive
+                    right_squeeze_signs[1] = -1.0 # right thumb1 close direction assumed negative
+                    left_changed = False
+                    right_changed = False
+                    if left_armed:
+                        left_q_target, left_changed = clamp_targets_with_dwell(
+                            current_left_q, left_q_target, left_last_pos, left_last_change_time,
+                            last_left_cmd, left_cmd_last_change_time,
+                            left_squeeze_signs, SQUEEZE_OFFSET_RAD,
+                            DWELL_TIME_S, MOVE_EPS_RAD, CLAMP_ERR_RAD, tnow
+                        )
+                    if right_armed:
+                        right_q_target, right_changed = clamp_targets_with_dwell(
+                            current_right_q, right_q_target, right_last_pos, right_last_change_time,
+                            last_right_cmd, right_cmd_last_change_time,
+                            right_squeeze_signs, SQUEEZE_OFFSET_RAD,
+                            DWELL_TIME_S, MOVE_EPS_RAD, CLAMP_ERR_RAD, tnow
+                        )
+                    # If any joint changed, write back atomically per hand
+                    if left_changed:
+                        try:
+                            with left_cmd_q_in.get_lock():
+                                left_cmd_q_in[:] = left_q_target
+                        except Exception:
+                            pass
+                        left_armed = False
+                    if right_changed:
+                        try:
+                            with right_cmd_q_in.get_lock():
+                                right_cmd_q_in[:] = right_q_target
+                        except Exception:
+                            pass
+                        right_armed = False
 
                 # get dual hand action
                 action_data = np.concatenate((left_q_target, right_q_target))    
