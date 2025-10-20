@@ -56,7 +56,7 @@ DEX3_KB_STEP = 0.05
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 55.0 * np.pi / 180.0
 # Right thumb1 target range
-R_THUMB1_MIN_RAD = -45.0 * np.pi / 180.0
+# R_THUMB1_MIN_RAD = -40.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0 * np.pi / 180.0
 
 # Controller per-press edge detector state
@@ -136,15 +136,23 @@ if __name__ == '__main__':
     # basic control parameters
     parser.add_argument('--right-idx-middle-0-angle', type = float, default = 60.0, help = 'right index 0 and middle 0 finger angle')
     parser.add_argument('--right-idx-middle-1-angle', type = float, default = 40.0, help = 'right index 1 and middle 1 finger angle')
+    parser.add_argument('--left-thumb0-angle', type = float, default = -27.5, help = 'left hand thumb0 angle in degrees')
+    parser.add_argument('--right-thumb0-angle', type = float, default = -27.5, help = 'right hand thumb0 angle in degrees')
+    parser.add_argument('--right-thumb1-min-angle', type = float, default = -40.0, help = 'right hand thumb1 min angle in degrees (used when pressing n)')
     parser.add_argument('--xr-mode', type=str, choices=['hand', 'controller'], default='hand', help='Select XR device tracking source')
     parser.add_argument('--arm', type=str, choices=['G1_29', 'G1_23', 'H1_2', 'H1'], default='G1_29', help='Select arm controller')
     parser.add_argument('--ee', type=str, choices=['dex1', 'dex3', 'inspire1', 'brainco'], help='Select end effector controller')
-    # dex3 clamp options
-    parser.add_argument('--disable-clamp', dest='disable_clamp', action='store_true',
-                        help='After dwell, relax targets to measured positions (may reduce grip on small objects)')
-    parser.add_argument('--enable-clamp', dest='disable_clamp', action='store_false',
-                        help='Do not relax targets to measured positions (keep commanded targets)')
-    parser.set_defaults(disable_clamp=True)
+    # dex3 clamp options (separate control for left and right hands)
+    parser.add_argument('--disable-clamp-left', dest='disable_clamp_left', action='store_true',
+                        help='Left hand: After dwell, relax targets to measured positions')
+    parser.add_argument('--enable-clamp-left', dest='disable_clamp_left', action='store_false',
+                        help='Left hand: Do not relax targets (keep commanded targets)')
+    parser.set_defaults(disable_clamp_left=True)
+    parser.add_argument('--disable-clamp-right', dest='disable_clamp_right', action='store_true',
+                        help='Right hand: After dwell, relax targets to measured positions')
+    parser.add_argument('--enable-clamp-right', dest='disable_clamp_right', action='store_false',
+                        help='Right hand: Do not relax targets (keep commanded targets)')
+    parser.set_defaults(disable_clamp_right=True)
     # mode flags
     parser.add_argument('--motion', action = 'store_true', help = 'Enable motion control mode')
     parser.add_argument('--headless', action='store_true', help='Enable headless mode (no display)')
@@ -155,10 +163,17 @@ if __name__ == '__main__':
     parser.add_argument('--task-dir', type = str, default = './utils/data/', help = 'path to save data')
     parser.add_argument('--task-name', type = str, default = 'pickup_tools', help = 'task name for recording')
     parser.add_argument('--task-desc', type = str, default = 'pick the tools from the left plate in order and place them in the right plate.', help = 'task goal for recording')
+    parser.add_argument('--low-bandwidth', action = 'store_true', help = 'Enable low bandwidth mode (minimal video streaming to XR device, for tracking-only use)')
+    # controller diagnostics and mapping
+    parser.add_argument('--reset-button', type=str, default="right_squeeze_ctrl_state", help='Controller button attribute name to trigger scene reset (sim only)')
+    parser.add_argument('--reset-category', type=str, default='1', help='Reset category: 1=scene objects only, 2=full scene')
 
 
     args = parser.parse_args()
     logger_mp.info(f"args: {args}")
+
+    # Configure right thumb1 minimum angle (degrees -> radians)
+    R_THUMB1_MIN_RAD = args.right_thumb1_min_angle * np.pi / 180.0
 
     try:
         # ipc communication. client usage: see utils/ipc.py
@@ -186,10 +201,10 @@ if __name__ == '__main__':
                 'fps': 30,
                 'head_camera_type': 'opencv',
                 'head_camera_image_shape': [480, 640],  # Head camera resolution
-                'head_camera_id_numbers': [0],
+                'head_camera_id_numbers': [4],
                 'wrist_camera_type': 'opencv',
                 'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-                'wrist_camera_id_numbers': [2, 4],
+                'wrist_camera_id_numbers': [0, 2],
             }
 
 
@@ -232,7 +247,7 @@ if __name__ == '__main__':
 
         # television: obtain hand pose data from the XR device and transmit the robot's head camera image to the XR device.
         tv_wrapper = TeleVuerWrapper(binocular=BINOCULAR, use_hand_tracking=args.xr_mode == "hand", img_shape=tv_img_shape, img_shm_name=tv_img_shm.name, 
-                                    return_state_data=True, return_hand_rot_data = False)
+                                    return_state_data=True, return_hand_rot_data = False, low_bandwidth=args.low_bandwidth)
 
         # arm
         if args.arm == "G1_29":
@@ -258,7 +273,7 @@ if __name__ == '__main__':
             with left_dex3_cmd_q_array.get_lock():
                 # Order: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1]
                 left_init = np.array([
-                    -27.5 * np.pi / 180.0,  # thumb0
+                    args.left_thumb0_angle * np.pi / 180.0,  # thumb0
                     0.0,                    # thumb1 (controlled by c/v)
                     0.0,                    # thumb2
                     -60.0 * np.pi / 180.0,  # middle0
@@ -270,7 +285,7 @@ if __name__ == '__main__':
             # right hand has different order
             with right_dex3_cmd_q_array.get_lock():
                 right_init = np.array([
-                    -27.5 * np.pi / 180.0,  # thumb0
+                    args.right_thumb0_angle * np.pi / 180.0,  # thumb0
                     0.0,                    # thumb1 (controlled by b/n)
                     0.0,                    # thumb2
                     args.right_idx_middle_0_angle * np.pi / 180.0,   # index0
@@ -284,7 +299,8 @@ if __name__ == '__main__':
             dual_hand_state_array = Array('d', 14, lock = False)   # [output] current left, right hand state(14) data.
             dual_hand_action_array = Array('d', 14, lock = False)  # [output] current left, right hand action(14) data.
             hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim,
-                                          left_cmd_q_in=left_dex3_cmd_q_array, right_cmd_q_in=right_dex3_cmd_q_array, disable_clamp=args.disable_clamp)
+                                          left_cmd_q_in=left_dex3_cmd_q_array, right_cmd_q_in=right_dex3_cmd_q_array, 
+                                          disable_clamp_left=args.disable_clamp_left, disable_clamp_right=args.disable_clamp_right)
             # expose arrays for keyboard handler
             LEFT_DEX3_CMD_ARRAY = left_dex3_cmd_q_array
             RIGHT_DEX3_CMD_ARRAY = right_dex3_cmd_q_array
@@ -419,6 +435,17 @@ if __name__ == '__main__':
                     if START and rt and not CONTROLLER_PREV.get("rt", False):
                         RECORD_TOGGLE = True
                         logger_mp.info("[controller] RECORD_TOGGLE -> True")
+                    # Optional: dynamic reset button mapping (simulation only)
+                    if args.sim and args.reset_button:
+                        try:
+                            btn_val = bool(getattr(tele_data.tele_state, args.reset_button))
+                            prev_val = bool(CONTROLLER_PREV.get(args.reset_button, False))
+                            if btn_val and not prev_val:
+                                publish_reset_category(args.reset_category, reset_pose_publisher)
+                                logger_mp.info(f"[controller] Reset scene requested ({args.reset_button}, category={args.reset_category})")
+                            CONTROLLER_PREV[args.reset_button] = btn_val
+                        except Exception as e:
+                            logger_mp.warning(f"[controller] reset-button mapping failed: {e}")
                     # Update previous states
                     CONTROLLER_PREV["lt"], CONTROLLER_PREV["rt"] = lt, rt
                 if (args.ee == "dex3" or args.ee == "inspire1" or args.ee == "brainco") and args.xr_mode == "hand":

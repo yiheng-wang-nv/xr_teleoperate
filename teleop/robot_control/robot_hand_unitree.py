@@ -35,7 +35,7 @@ kTopicDex3RightState = "rt/dex3/right/state"
 class Dex3_1_Controller:
     def __init__(self, left_hand_array_in, right_hand_array_in, dual_hand_data_lock = None, dual_hand_state_array_out = None,
                        dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False,
-                       left_cmd_q_in = None, right_cmd_q_in = None, disable_clamp = True):
+                       left_cmd_q_in = None, right_cmd_q_in = None, disable_clamp_left = True, disable_clamp_right = True):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -54,15 +54,18 @@ class Dex3_1_Controller:
         Unit_Test: Whether to enable unit testing
 
         simulation_mode: Whether to use simulation mode (default is False, which means using real robot)
-        disable_clamp: When True (default), enable dwell-based relaxation that adjusts targets to measured positions after contact.
-                       When False, keep commanded targets without relaxation (tighter grip on small objects).
+        disable_clamp_left: When True (default), enable dwell-based relaxation for left hand that adjusts targets to measured positions after contact.
+                            When False, keep commanded targets without relaxation (tighter grip on small objects).
+        disable_clamp_right: When True (default), enable dwell-based relaxation for right hand that adjusts targets to measured positions after contact.
+                             When False, keep commanded targets without relaxation (tighter grip on small objects).
         """
         logger_mp.info("Initialize Dex3_1_Controller...")
 
         self.fps = fps
         self.Unit_Test = Unit_Test
         self.simulation_mode = simulation_mode
-        self.disable_clamp = disable_clamp
+        self.disable_clamp_left = disable_clamp_left
+        self.disable_clamp_right = disable_clamp_right
         if not self.Unit_Test:
             self.hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3)
         else:
@@ -186,7 +189,7 @@ class Dex3_1_Controller:
         DWELL_TIME_S = 1.0
         MOVE_EPS_RAD = 0.005
         CLAMP_ERR_RAD = 0.02
-        SQUEEZE_OFFSET_RAD = 0.03  # small preload added on thumbs when relaxed to contact
+        SQUEEZE_OFFSET_RAD = 0.2 # small preload added on thumbs when relaxed to contact
 
         # track last movement for dwell detection (per joint)
         left_last_pos = np.zeros(Dex3_Num_Motors)
@@ -216,8 +219,19 @@ class Dex3_1_Controller:
                 if (now_ts - last_change_time[j]) >= dwell_s and (now_ts - last_cmd_change_time[j]) >= dwell_s \
                    and abs(target_q[j] - current_q[j]) > err_eps:
                     # relax to measured, plus optional preload for thumbs via squeeze_signs
+                    # BUT only add preload if we're trying to close (being blocked by contact)
                     if squeeze_signs[j] != 0.0:
-                        target_q[j] = float(current_q[j] + squeeze_signs[j] * squeeze_offset)
+                        # Check if we're moving in the closing direction: (target - current) has same sign as squeeze_sign
+                        # For left thumb1: squeeze_sign=+1.0, closing means target > current (positive error)
+                        # For right thumb1: squeeze_sign=-1.0, closing means target < current (negative error)
+                        error = target_q[j] - current_q[j]
+                        is_closing = (error * squeeze_signs[j]) > 0
+                        if is_closing:
+                            # Add preload to maintain grip on contact
+                            target_q[j] = float(current_q[j] + squeeze_signs[j] * squeeze_offset)
+                        else:
+                            # Opening or moving away - just relax to current position without preload
+                            target_q[j] = float(current_q[j])
                     else:
                         target_q[j] = float(current_q[j])
                     changed = True
@@ -291,14 +305,19 @@ class Dex3_1_Controller:
                     # dwell-based contact relaxation for all joints on both hands
                     tnow = time.time()
                     # define per-joint squeeze directions: + for closing, - for opening
-                    # Only thumbs (joint index 0/1/2) are given preload; we apply on thumb1 (index 1) here
+                    # Only thumb1 (index 1) is given preload and adjusted in controller mode
                     left_squeeze_signs = np.zeros(Dex3_Num_Motors)
                     right_squeeze_signs = np.zeros(Dex3_Num_Motors)
                     left_squeeze_signs[1] = 1.0   # left thumb1 close direction assumed positive
                     right_squeeze_signs[1] = -1.0 # right thumb1 close direction assumed negative
-                    # Build per-joint relaxation masks: enable or disable across all joints via disable_clamp
-                    left_clamp_mask = np.full(Dex3_Num_Motors, self.disable_clamp, dtype=bool)
-                    right_clamp_mask = np.full(Dex3_Num_Motors, self.disable_clamp, dtype=bool)
+                    # Build per-joint relaxation masks: ONLY apply to thumb1 (index 1) in controller mode
+                    # to avoid other joints getting stuck at contact positions since only thumb1 is controllable
+                    left_clamp_mask = np.zeros(Dex3_Num_Motors, dtype=bool)
+                    right_clamp_mask = np.zeros(Dex3_Num_Motors, dtype=bool)
+                    if self.disable_clamp_left:
+                        left_clamp_mask[1] = True  # only thumb1
+                    if self.disable_clamp_right:
+                        right_clamp_mask[1] = True  # only thumb1
                     left_changed = False
                     right_changed = False
                     if left_armed:
