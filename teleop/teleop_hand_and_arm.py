@@ -420,28 +420,42 @@ if __name__ == '__main__':
                     with right_hand_pos_array.get_lock():
                         right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
                 elif args.ee == "dex3" and args.xr_mode == "controller":
-                    # Dex3 controller mode - A/B button control
+                    # Dex3 controller mode - Grip button continuous control
+                    # (Triggers are reserved for START/RECORD control)
                     # Read current command arrays
                     with left_dex3_cmd_q_array.get_lock():
                         left_cmd = np.array(left_dex3_cmd_q_array[:])
                     with right_dex3_cmd_q_array.get_lock():
                         right_cmd = np.array(right_dex3_cmd_q_array[:])
 
-                    # A/B button detection
+                    # Get grip button values (0.0 to 1.0)
+                    # Grip buttons are on the side, pressed by middle finger
+                    left_grip = getattr(tele_data, 'left_grip_value', 0.0)
+                    right_grip = getattr(tele_data, 'right_grip_value', 0.0)
+                    
+                    # Map grip values to thumb1 range
+                    # Left grip: 0.0 -> THUMB1_MIN_RAD (closed), 1.0 -> THUMB1_MAX_RAD (open)
+                    left_cmd[1] = THUMB1_MIN_RAD + left_grip * (THUMB1_MAX_RAD - THUMB1_MIN_RAD)
+                    
+                    # Right grip: 0.0 -> R_THUMB1_MAX_RAD (closed), 1.0 -> R_THUMB1_MIN_RAD (open)
+                    # (note: right hand has inverted range)
+                    right_cmd[1] = R_THUMB1_MAX_RAD + right_grip * (R_THUMB1_MIN_RAD - R_THUMB1_MAX_RAD)
+
+                    # Optional: A/B buttons for quick open/close (as backup/override)
                     la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
                     lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
                     ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
                     rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
 
                     if la and not CONTROLLER_PREV.get("la", False):
-                        left_cmd[1] = float(THUMB1_MAX_RAD)
+                        left_cmd[1] = float(THUMB1_MAX_RAD)  # Fully open
                     if lb and not CONTROLLER_PREV.get("lb", False):
-                        left_cmd[1] = float(THUMB1_MIN_RAD)
+                        left_cmd[1] = float(THUMB1_MIN_RAD)  # Fully closed
 
                     if ra and not CONTROLLER_PREV.get("ra", False):
-                        right_cmd[1] = float(R_THUMB1_MIN_RAD)
+                        right_cmd[1] = float(R_THUMB1_MIN_RAD)  # Fully open
                     if rb and not CONTROLLER_PREV.get("rb", False):
-                        right_cmd[1] = float(R_THUMB1_MAX_RAD)
+                        right_cmd[1] = float(R_THUMB1_MAX_RAD)  # Fully closed
 
                     # Update previous state
                     CONTROLLER_PREV["la"], CONTROLLER_PREV["lb"] = la, lb
