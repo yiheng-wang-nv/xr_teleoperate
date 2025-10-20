@@ -345,19 +345,19 @@ if __name__ == '__main__':
             recorder = EpisodeWriter(task_dir = args.task_dir + args.task_name, task_goal = args.task_desc, frequency = args.frequency, rerun_log = True)
 
 
-        logger_mp.info("Press 'r' or Left Trigger to start/resume; 'r'/LT again to pause; 'q' to exit.")
+        logger_mp.info("Press 'r' or Left A button to start/resume; 'r'/LA again to pause; 'q' to exit.")
         while not STOP:
             # Wait until START is True or STOP requested
             while not START and not STOP:
-                # Allow controller Left Trigger to resume from pause
+                # Allow controller Left A button to resume from pause
                 if args.xr_mode == "controller":
                     try:
                         tele_data = tv_wrapper.get_motion_state_data()
-                        lt = bool(getattr(tele_data.tele_state, 'left_trigger_state', False))
-                        if lt and not CONTROLLER_PREV.get("lt", False):
+                        la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
+                        if la and not CONTROLLER_PREV.get("la", False):
                             START = True
-                            logger_mp.info("[controller] START -> True")
-                        CONTROLLER_PREV["lt"] = lt
+                            logger_mp.info("[controller] Left A: START -> True")
+                        CONTROLLER_PREV["la"] = la
                     except Exception:
                         pass
                 time.sleep(0.01)
@@ -398,68 +398,52 @@ if __name__ == '__main__':
                             publish_reset_category(1, reset_pose_publisher)
                 # get input data
                 tele_data = tv_wrapper.get_motion_state_data()
-                # Controller bindings using index-finger triggers (no joystick buttons)
+                # Controller bindings - use A buttons for START/RECORD
                 if args.xr_mode == "controller":
-                    lt = bool(getattr(tele_data.tele_state, 'left_trigger_state', False))
-                    rt = bool(getattr(tele_data.tele_state, 'right_trigger_state', False))
-                    # Left trigger rising edge -> toggle START
-                    if lt and not CONTROLLER_PREV.get("lt", False):
+                    la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
+                    ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
+                    # Left A button rising edge -> toggle START
+                    if la and not CONTROLLER_PREV.get("la", False):
                         prev = START
                         START = not START
                         if prev != START:
-                            logger_mp.info(f"[controller] START -> {START}")
-                    # Right trigger rising edge -> toggle RECORD when running
-                    if START and rt and not CONTROLLER_PREV.get("rt", False):
+                            logger_mp.info(f"[controller] Left A: START -> {START}")
+                    # Right A button rising edge -> toggle RECORD when running
+                    if START and ra and not CONTROLLER_PREV.get("ra", False):
                         RECORD_TOGGLE = True
-                        logger_mp.info("[controller] RECORD_TOGGLE -> True")
+                        logger_mp.info("[controller] Right A: RECORD_TOGGLE -> True")
                     # Update previous states
-                    CONTROLLER_PREV["lt"], CONTROLLER_PREV["rt"] = lt, rt
+                    CONTROLLER_PREV["la"], CONTROLLER_PREV["ra"] = la, ra
                 if (args.ee == "dex3" or args.ee == "inspire1" or args.ee == "brainco") and args.xr_mode == "hand":
                     with left_hand_pos_array.get_lock():
                         left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
                     with right_hand_pos_array.get_lock():
                         right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
                 elif args.ee == "dex3" and args.xr_mode == "controller":
-                    # Dex3 controller mode - Grip button continuous control
-                    # (Triggers are reserved for START/RECORD control)
+                    # Dex3 controller mode - Trigger continuous control
                     # Read current command arrays
                     with left_dex3_cmd_q_array.get_lock():
                         left_cmd = np.array(left_dex3_cmd_q_array[:])
                     with right_dex3_cmd_q_array.get_lock():
                         right_cmd = np.array(right_dex3_cmd_q_array[:])
 
-                    # Get grip button values (0.0 to 1.0)
-                    # Grip buttons are on the side, pressed by middle finger
-                    left_grip = getattr(tele_data, 'left_grip_value', 0.0)
-                    right_grip = getattr(tele_data, 'right_grip_value', 0.0)
+                    # Get trigger values
+                    # Note: televuer returns trigger_value in range [10.0, 0.0] (inverted)
+                    # We need to normalize to [0.0, 1.0]
+                    left_trigger_raw = getattr(tele_data, 'left_trigger_value', 10.0)
+                    right_trigger_raw = getattr(tele_data, 'right_trigger_value', 10.0)
                     
-                    # Map grip values to thumb1 range
-                    # Left grip: 0.0 -> THUMB1_MIN_RAD (closed), 1.0 -> THUMB1_MAX_RAD (open)
-                    left_cmd[1] = THUMB1_MIN_RAD + left_grip * (THUMB1_MAX_RAD - THUMB1_MIN_RAD)
+                    # Normalize: 10.0 -> 0.0 (not pressed), 0.0 -> 1.0 (fully pressed)
+                    left_trigger = np.clip((10.0 - left_trigger_raw) / 10.0, 0.0, 1.0)
+                    right_trigger = np.clip((10.0 - right_trigger_raw) / 10.0, 0.0, 1.0)
                     
-                    # Right grip: 0.0 -> R_THUMB1_MAX_RAD (closed), 1.0 -> R_THUMB1_MIN_RAD (open)
+                    # Map trigger values to thumb1 range
+                    # Left trigger: 0.0 -> THUMB1_MIN_RAD (closed), 1.0 -> THUMB1_MAX_RAD (open)
+                    left_cmd[1] = THUMB1_MIN_RAD + left_trigger * (THUMB1_MAX_RAD - THUMB1_MIN_RAD)
+                    
+                    # Right trigger: 0.0 -> R_THUMB1_MAX_RAD (closed), 1.0 -> R_THUMB1_MIN_RAD (open)
                     # (note: right hand has inverted range)
-                    right_cmd[1] = R_THUMB1_MAX_RAD + right_grip * (R_THUMB1_MIN_RAD - R_THUMB1_MAX_RAD)
-
-                    # Optional: A/B buttons for quick open/close (as backup/override)
-                    la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
-                    lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
-                    ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
-                    rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
-
-                    if la and not CONTROLLER_PREV.get("la", False):
-                        left_cmd[1] = float(THUMB1_MAX_RAD)  # Fully open
-                    if lb and not CONTROLLER_PREV.get("lb", False):
-                        left_cmd[1] = float(THUMB1_MIN_RAD)  # Fully closed
-
-                    if ra and not CONTROLLER_PREV.get("ra", False):
-                        right_cmd[1] = float(R_THUMB1_MIN_RAD)  # Fully open
-                    if rb and not CONTROLLER_PREV.get("rb", False):
-                        right_cmd[1] = float(R_THUMB1_MAX_RAD)  # Fully closed
-
-                    # Update previous state
-                    CONTROLLER_PREV["la"], CONTROLLER_PREV["lb"] = la, lb
-                    CONTROLLER_PREV["ra"], CONTROLLER_PREV["rb"] = ra, rb
+                    right_cmd[1] = R_THUMB1_MAX_RAD + right_trigger * (R_THUMB1_MIN_RAD - R_THUMB1_MAX_RAD)
 
                     # Final safety clipping for all joints
                     left_cmd[0] = np.clip(left_cmd[0], *DEX3_LEFT_LIMITS["thumb0"])
