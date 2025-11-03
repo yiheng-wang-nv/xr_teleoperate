@@ -131,7 +131,6 @@ if __name__ == '__main__':
     parser.add_argument('--frequency', type = float, default = 30.0, help = 'save data\'s frequency')
 
     # basic control parameters
-    parser.add_argument('--xr-mode', type=str, choices=['hand', 'controller'], default='hand', help='Select XR device tracking source')
     parser.add_argument('--thumb-mode', type=str, choices=['controller', 'keyboard'], default='controller', help='Dex3 thumb command source')
     # mode flags
     parser.add_argument('--sim', action = 'store_true', help = 'Enable isaac simulation mode')
@@ -215,7 +214,7 @@ if __name__ == '__main__':
         image_receive_thread.start()
 
         # television: obtain hand pose data from the XR device and transmit the robot's head camera image to the XR device.
-        tv_wrapper = TeleVuerWrapper(binocular=BINOCULAR, use_hand_tracking=args.xr_mode == "hand", img_shape=tv_img_shape, img_shm_name=tv_img_shm.name, 
+        tv_wrapper = TeleVuerWrapper(binocular=BINOCULAR, use_hand_tracking=False, img_shape=tv_img_shape, img_shm_name=tv_img_shm.name, 
                                     return_state_data=True, return_hand_rot_data = False)
 
         # arm (fixed to G1-29)
@@ -280,16 +279,15 @@ if __name__ == '__main__':
             # Wait until START is True or STOP requested
             while not START and not STOP:
                 # Allow controller Left A button to resume from pause
-                if args.xr_mode == "controller":
-                    try:
-                        tele_data = tv_wrapper.get_motion_state_data()
-                        la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
-                        if la and not CONTROLLER_PREV.get("la", False):
-                            START = True
-                            logger_mp.info("[controller] Left A: START -> True")
-                        CONTROLLER_PREV["la"] = la
-                    except Exception:
-                        pass
+                try:
+                    tele_data = tv_wrapper.get_motion_state_data()
+                    la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
+                    if la and not CONTROLLER_PREV.get("la", False):
+                        START = True
+                        logger_mp.info("[controller] Left A: START -> True")
+                    CONTROLLER_PREV["la"] = la
+                except Exception:
+                    pass
                 time.sleep(0.01)
             if STOP:
                 break
@@ -328,27 +326,22 @@ if __name__ == '__main__':
                 # get input data
                 tele_data = tv_wrapper.get_motion_state_data()
                 # Controller bindings - use A buttons for START/RECORD
-                if args.xr_mode == "controller":
-                    la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
-                    ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
-                    # Left A button rising edge -> toggle START
-                    if la and not CONTROLLER_PREV.get("la", False):
-                        prev = START
-                        START = not START
-                        if prev != START:
-                            logger_mp.info(f"[controller] Left A: START -> {START}")
-                    # Right A button rising edge -> toggle RECORD when running
-                    if START and ra and not CONTROLLER_PREV.get("ra", False):
-                        RECORD_TOGGLE = True
-                        logger_mp.info("[controller] Right A: RECORD_TOGGLE -> True")
-                    # Update previous states
-                    CONTROLLER_PREV["la"], CONTROLLER_PREV["ra"] = la, ra
-                if args.xr_mode == "hand":
-                    with left_hand_pos_array.get_lock():
-                        left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
-                    with right_hand_pos_array.get_lock():
-                        right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
-                elif args.xr_mode == "controller" and args.thumb_mode == "controller":
+                la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
+                ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
+                # Left A button rising edge -> toggle START
+                if la and not CONTROLLER_PREV.get("la", False):
+                    prev = START
+                    START = not START
+                    if prev != START:
+                        logger_mp.info(f"[controller] Left A: START -> {START}")
+                # Right A button rising edge -> toggle RECORD when running
+                if START and ra and not CONTROLLER_PREV.get("ra", False):
+                    RECORD_TOGGLE = True
+                    logger_mp.info("[controller] Right A: RECORD_TOGGLE -> True")
+                # Update previous states
+                CONTROLLER_PREV["la"], CONTROLLER_PREV["ra"] = la, ra
+
+                if args.thumb_mode == "controller":
                     # Dex3 controller mode - Trigger continuous control
                     # Read current command arrays
                     with left_dex3_cmd_q_array.get_lock():
@@ -402,7 +395,7 @@ if __name__ == '__main__':
                 if args.record:
                     RECORD_READY = recorder.is_ready()
                 # dex hand state/action logging
-                if args.xr_mode in ("hand", "controller"):
+                if True:
                     with dual_hand_data_lock:
                         left_ee_state = dual_hand_state_array[:7]
                         right_ee_state = dual_hand_state_array[-7:]
