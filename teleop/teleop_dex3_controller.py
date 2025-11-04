@@ -14,6 +14,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
+try:
+    from serl_robot_infra.unitree_env import publish_xr_action
+except Exception:  # noqa: BLE001 - optional dependency
+    publish_xr_action = None
+
 from televuer import TeleVuerWrapper
 from teleop.robot_control.robot_arm import G1_29_ArmController
 from teleop.robot_control.robot_arm_ik import G1_29_ArmIK
@@ -420,6 +425,23 @@ if __name__ == '__main__':
                 right_arm_state = current_lr_arm_q[-7:]
                 left_arm_action = sol_q[:7]
                 right_arm_action = sol_q[-7:]
+
+                if publish_xr_action is not None:
+                    try:
+                        left_hand_action_np = np.asarray(left_hand_action, dtype=np.float32)
+                        right_hand_action_np = np.asarray(right_hand_action, dtype=np.float32)
+                        joint_targets = np.concatenate(
+                            [
+                                np.asarray(left_arm_action, dtype=np.float32),
+                                np.asarray(right_arm_action, dtype=np.float32),
+                                left_hand_action_np,
+                                right_hand_action_np,
+                            ]
+                        )
+                        publish_xr_action(joint_targets)
+                    except Exception as exc:  # noqa: BLE001 - best effort
+                        logger_mp.debug(f"publish_xr_action failed: {exc}")
+
                 if RECORD_RUNNING:
                     colors = {}
                     depths = {}
