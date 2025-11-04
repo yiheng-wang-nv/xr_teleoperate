@@ -41,6 +41,7 @@ STOP           = False  # Enable to begin system exit procedure
 RECORD_TOGGLE  = False  # [Ready] ⇄ [Recording] ⟶ [AutoSave] ⟶ [Ready]         (⇄ manual) (⟶ auto)
 RECORD_RUNNING = False  # True if [Recording]
 RECORD_READY   = True   # True if [Ready], False if [Recording] / [AutoSave]
+CURRENT_LABEL  = "unspecified"
 # task info
 TASK_NAME = None
 TASK_DESC = None
@@ -141,8 +142,8 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action = 'store_true', help = 'Enable isaac simulation mode')
     parser.add_argument('--record', action = 'store_true', help = 'Enable data recording')
     parser.add_argument('--task-dir', type = str, default = './utils/data/', help = 'path to save data')
-    parser.add_argument('--task-name', type = str, default = 'pickup_tools', help = 'task name for recording')
-    parser.add_argument('--task-desc', type = str, default = 'pick the tools from the left plate in order and place them in the right plate.', help = 'task goal for recording')
+    parser.add_argument('--task-name', type = str, default = 'debug_rl', help = 'task name for recording')
+    parser.add_argument('--task-desc', type = str, default = 'debug_rl', help = 'task goal for recording')
 
     args = parser.parse_args()
     logger_mp.info(f"args: {args}")
@@ -321,11 +322,14 @@ if __name__ == '__main__':
                     if not RECORD_RUNNING:
                         if recorder.create_episode():
                             RECORD_RUNNING = True
+                            CURRENT_LABEL = "unspecified"
+                            recorder.set_label(CURRENT_LABEL)
                         else:
                             logger_mp.error("Failed to create episode. Recording not started.")
                     else:
                         RECORD_RUNNING = False
                         recorder.save_episode()
+                        CURRENT_LABEL = "unspecified"
                         if args.sim:
                             publish_reset_category(1, reset_pose_publisher)
                 # get input data
@@ -333,6 +337,8 @@ if __name__ == '__main__':
                 # Controller bindings - use A buttons for START/RECORD
                 la = bool(getattr(tele_data.tele_state, 'left_aButton', False))
                 ra = bool(getattr(tele_data.tele_state, 'right_aButton', False))
+                lb = bool(getattr(tele_data.tele_state, 'left_bButton', False))
+                rb = bool(getattr(tele_data.tele_state, 'right_bButton', False))
                 # Left A button rising edge -> toggle START
                 if la and not CONTROLLER_PREV.get("la", False):
                     prev = START
@@ -343,8 +349,20 @@ if __name__ == '__main__':
                 if START and ra and not CONTROLLER_PREV.get("ra", False):
                     RECORD_TOGGLE = True
                     logger_mp.info("[controller] Right A: RECORD_TOGGLE -> True")
+                if RECORD_RUNNING:
+                    if lb and not CONTROLLER_PREV.get("lb", False):
+                        CURRENT_LABEL = "failure"
+                        if recorder is not None:
+                            recorder.set_label(CURRENT_LABEL)
+                        logger_mp.info("[controller] Left B: label -> failure")
+                    if rb and not CONTROLLER_PREV.get("rb", False):
+                        CURRENT_LABEL = "success"
+                        if recorder is not None:
+                            recorder.set_label(CURRENT_LABEL)
+                        logger_mp.info("[controller] Right B: label -> success")
                 # Update previous states
                 CONTROLLER_PREV["la"], CONTROLLER_PREV["ra"] = la, ra
+                CONTROLLER_PREV["lb"], CONTROLLER_PREV["rb"] = lb, rb
 
                 if args.thumb_mode == "controller":
                     # Dex3 controller mode - Trigger continuous control
