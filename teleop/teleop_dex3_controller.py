@@ -42,6 +42,7 @@ RECORD_TOGGLE  = False  # [Ready] ⇄ [Recording] ⟶ [AutoSave] ⟶ [Ready]    
 RECORD_RUNNING = False  # True if [Recording]
 RECORD_READY   = True   # True if [Ready], False if [Recording] / [AutoSave]
 CURRENT_LABEL  = "unspecified"
+RECORDER_REF   = None
 # task info
 TASK_NAME = None
 TASK_DESC = None
@@ -73,7 +74,7 @@ CONTROLLER_PREV = {
 }
 
 def on_press(key):
-    global STOP, START, RECORD_TOGGLE
+    global STOP, START, RECORD_TOGGLE, CURRENT_LABEL, RECORDER_REF, RECORD_RUNNING
     if key == 'r':
         START = not START
         logger_mp.info(f"[on_press] START -> {START}")
@@ -81,6 +82,14 @@ def on_press(key):
         STOP = True
     elif key == 's' and START == True:
         RECORD_TOGGLE = True
+    elif key == 'f' and RECORD_RUNNING and RECORDER_REF is not None:
+        CURRENT_LABEL = "failure"
+        RECORDER_REF.set_label(CURRENT_LABEL)
+        logger_mp.info("[keyboard] label -> failure (key 'f')")
+    elif key == 'g' and RECORD_RUNNING and RECORDER_REF is not None:
+        CURRENT_LABEL = "success"
+        RECORDER_REF.set_label(CURRENT_LABEL)
+        logger_mp.info("[keyboard] label -> success (key 'g')")
     else:
         # Keyboard: left thumb1 c/v, right thumb1 b/n (only when START is True)
         if not START:
@@ -278,6 +287,7 @@ if __name__ == '__main__':
                 frequency=args.frequency,
                 rerun_log=True,
             )
+            RECORDER_REF = recorder
 
 
         logger_mp.info("Press 'r' or Left A button to start/resume; 'r'/LA again to pause; 'q' to exit.")
