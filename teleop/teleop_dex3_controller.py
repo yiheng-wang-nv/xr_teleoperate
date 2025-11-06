@@ -60,7 +60,7 @@ DEX3_KB_STEP = 0.05
 THUMB1_MIN_RAD = 0.0
 THUMB1_MAX_RAD = 55.0 * np.pi / 180.0
 # Right thumb1 target range
-R_THUMB1_MIN_RAD = -55.0 * np.pi / 180.0
+R_THUMB1_MIN_RAD = -40.0 * np.pi / 180.0
 R_THUMB1_MAX_RAD = 0.0
 
 # Controller per-press edge detector state
@@ -174,62 +174,40 @@ if __name__ == '__main__':
                 'fps': 30,
                 'head_camera_type': 'opencv',
                 'head_camera_image_shape': [480, 640],  # Head camera resolution
-                'head_camera_id_numbers': [0],
                 'wrist_camera_type': 'opencv',
                 'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-                'wrist_camera_id_numbers': [2, 4],
             }
         else:
             img_config = {
                 'fps': 30,
                 'head_camera_type': 'opencv',
                 'head_camera_image_shape': [480, 640],  # Head camera resolution
-                'head_camera_id_numbers': [0],
                 'wrist_camera_type': 'opencv',
                 'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-                'wrist_camera_id_numbers': [2, 4],
             }
 
-
-        ASPECT_RATIO_THRESHOLD = 2.0 # If the aspect ratio exceeds this value, it is considered binocular
-        if len(img_config['head_camera_id_numbers']) > 1 or (img_config['head_camera_image_shape'][1] / img_config['head_camera_image_shape'][0] > ASPECT_RATIO_THRESHOLD):
-            BINOCULAR = True
-        else:
-            BINOCULAR = False
-        if 'wrist_camera_type' in img_config:
-            WRIST = True
-        else:
-            WRIST = False
-        
-        if BINOCULAR and not (img_config['head_camera_image_shape'][1] / img_config['head_camera_image_shape'][0] > ASPECT_RATIO_THRESHOLD):
-            tv_img_shape = (img_config['head_camera_image_shape'][0], img_config['head_camera_image_shape'][1] * 2, 3)
-        else:
-            tv_img_shape = (img_config['head_camera_image_shape'][0], img_config['head_camera_image_shape'][1], 3)
+        tv_img_shape = (img_config['head_camera_image_shape'][0], img_config['head_camera_image_shape'][1], 3)
 
         tv_img_shm = shared_memory.SharedMemory(create = True, size = np.prod(tv_img_shape) * np.uint8().itemsize)
         tv_img_array = np.ndarray(tv_img_shape, dtype = np.uint8, buffer = tv_img_shm.buf)
 
-        if WRIST and args.sim:
-            wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1] * 2, 3)
-            wrist_img_shm = shared_memory.SharedMemory(create = True, size = np.prod(wrist_img_shape) * np.uint8().itemsize)
-            wrist_img_array = np.ndarray(wrist_img_shape, dtype = np.uint8, buffer = wrist_img_shm.buf)
+        wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1] * 2, 3)
+        wrist_img_shm = shared_memory.SharedMemory(create = True, size = np.prod(wrist_img_shape) * np.uint8().itemsize)
+        wrist_img_array = np.ndarray(wrist_img_shape, dtype = np.uint8, buffer = wrist_img_shm.buf)
+
+        if args.sim:
             img_client = ImageClient(tv_img_shape = tv_img_shape, tv_img_shm_name = tv_img_shm.name, 
                                     wrist_img_shape = wrist_img_shape, wrist_img_shm_name = wrist_img_shm.name, server_address="127.0.0.1")
-        elif WRIST and not args.sim:
-            wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1] * 2, 3)
-            wrist_img_shm = shared_memory.SharedMemory(create = True, size = np.prod(wrist_img_shape) * np.uint8().itemsize)
-            wrist_img_array = np.ndarray(wrist_img_shape, dtype = np.uint8, buffer = wrist_img_shm.buf)
+        else:
             img_client = ImageClient(tv_img_shape = tv_img_shape, tv_img_shm_name = tv_img_shm.name, 
                                     wrist_img_shape = wrist_img_shape, wrist_img_shm_name = wrist_img_shm.name)
-        else:
-            img_client = ImageClient(tv_img_shape = tv_img_shape, tv_img_shm_name = tv_img_shm.name)
 
         image_receive_thread = threading.Thread(target = img_client.receive_process, daemon = True)
         image_receive_thread.daemon = True
         image_receive_thread.start()
 
         # television: obtain hand pose data from the XR device and transmit the robot's head camera image to the XR device.
-        tv_wrapper = TeleVuerWrapper(binocular=BINOCULAR, use_hand_tracking=False, img_shape=tv_img_shape, img_shm_name=tv_img_shm.name, 
+        tv_wrapper = TeleVuerWrapper(binocular=False, use_hand_tracking=False, img_shape=tv_img_shape, img_shm_name=tv_img_shm.name, 
                                     return_state_data=True, return_hand_rot_data = False)
 
         # arm (fixed to G1-29)
@@ -446,8 +424,7 @@ if __name__ == '__main__':
                 # head image
                 current_tv_image = tv_img_array.copy()
                 # wrist image
-                if WRIST:
-                    current_wrist_image = wrist_img_array.copy()
+                current_wrist_image = wrist_img_array.copy()
                 # arm state and action
                 left_arm_state  = current_lr_arm_q[:7]
                 right_arm_state = current_lr_arm_q[-7:]
@@ -473,17 +450,9 @@ if __name__ == '__main__':
                 if RECORD_RUNNING:
                     colors = {}
                     depths = {}
-                    if BINOCULAR:
-                        colors[f"color_{0}"] = current_tv_image[:, :tv_img_shape[1]//2]
-                        colors[f"color_{1}"] = current_tv_image[:, tv_img_shape[1]//2:]
-                        if WRIST:
-                            colors[f"color_{2}"] = current_wrist_image[:, :wrist_img_shape[1]//2]
-                            colors[f"color_{3}"] = current_wrist_image[:, wrist_img_shape[1]//2:]
-                    else:
-                        colors[f"color_{0}"] = current_tv_image
-                        if WRIST:
-                            colors[f"color_{1}"] = current_wrist_image[:, :wrist_img_shape[1]//2]
-                            colors[f"color_{2}"] = current_wrist_image[:, wrist_img_shape[1]//2:]
+                    colors["color_0"] = current_tv_image
+                    colors["color_1"] = current_wrist_image[:, :wrist_img_shape[1]//2]
+                    colors["color_2"] = current_wrist_image[:, wrist_img_shape[1]//2:]
                     states = {
                         "left_arm": {                                                                    
                             "qpos":   left_arm_state.tolist(),    # numpy.array -> list
@@ -561,9 +530,8 @@ if __name__ == '__main__':
             sim_state_subscriber.stop_subscribe()
         tv_img_shm.close()
         tv_img_shm.unlink()
-        if WRIST:
-            wrist_img_shm.close()
-            wrist_img_shm.unlink()
+        wrist_img_shm.close()
+        wrist_img_shm.unlink()
 
         if args.record and recorder is not None:
             recorder.close()
