@@ -2,8 +2,7 @@
 """
 Script to process and clean up episode folders in install_trocar_from_tray directory.
 Step 1: Process images
-  - Deletes all _color_1.jpg images
-  - Concatenates _color_0.jpg (left) and _color_2.jpg (right) into a single image
+  - Concatenates _color_0.jpg, _color_1.jpg, and _color_2.jpg into a single image (left to right)
   - Saves as <frame_name>.jpg
 Step 2: Clean up folders
   - Moves all images from colors/ folder to parent episode folder
@@ -51,41 +50,44 @@ def process_images_in_episode(episode_path):
             img_2_path = colors_path / f"{frame_name}_color_2.jpg"
             output_path = colors_path / f"{frame_name}.jpg"
             
-            # Check if both required images exist
-            if not img_0_path.exists() or not img_2_path.exists():
+            # Check if all three required images exist
+            if not img_0_path.exists() or not img_1_path.exists() or not img_2_path.exists():
                 print(f"    Warning: Missing images for frame {frame_name}, skipping...")
                 continue
             
             # Load images
             img_0 = Image.open(img_0_path)
+            img_1 = Image.open(img_1_path)
             img_2 = Image.open(img_2_path)
             
             # Get dimensions
             width_0 = img_0.width
+            width_1 = img_1.width
             width_2 = img_2.width
-            total_width = width_0 + width_2
-            height = max(img_0.height, img_2.height)
+            total_width = width_0 + width_1 + width_2
+            height = max(img_0.height, img_1.height, img_2.height)
             
             # Create new image with combined width
             combined = Image.new('RGB', (total_width, height))
             
-            # Paste images (left: img_0, right: img_2)
+            # Paste images (left to right: img_0, img_1, img_2)
             combined.paste(img_0, (0, 0))
-            combined.paste(img_2, (width_0, 0))
+            combined.paste(img_1, (width_0, 0))
+            combined.paste(img_2, (width_0 + width_1, 0))
             
             # Save combined image
             combined.save(output_path, quality=95)
             
             # Close images
             img_0.close()
+            img_1.close()
             img_2.close()
             combined.close()
             
             # Delete the original images
             img_0_path.unlink()
+            img_1_path.unlink()
             img_2_path.unlink()
-            if img_1_path.exists():
-                img_1_path.unlink()
             
             processed += 1
             
