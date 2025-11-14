@@ -153,6 +153,8 @@ if __name__ == '__main__':
     parser.add_argument('--task-dir', type = str, default = './utils/data/', help = 'path to save data')
     parser.add_argument('--task-name', type = str, default = 'debug_rl', help = 'task name for recording')
     parser.add_argument('--task-desc', type = str, default = 'debug_rl', help = 'task goal for recording')
+    parser.add_argument('--vr-scale', type=float, default=0.1,
+                        help='Scale factor (<1.0 to downscale) applied only to VR streaming resolution')
 
     args = parser.parse_args()
     logger_mp.info(f"args: {args}")
@@ -207,8 +209,15 @@ if __name__ == '__main__':
         image_receive_thread.start()
 
         # television: obtain hand pose data from the XR device and transmit the robot's head camera image to the XR device.
-        tv_wrapper = TeleVuerWrapper(binocular=False, use_hand_tracking=False, img_shape=tv_img_shape, img_shm_name=tv_img_shm.name, 
-                                    return_state_data=True, return_hand_rot_data = False)
+        tv_wrapper = TeleVuerWrapper(
+            binocular=False,
+            use_hand_tracking=False,
+            img_shape=tv_img_shape,
+            img_shm_name=tv_img_shm.name,
+            return_state_data=True,
+            return_hand_rot_data=False,
+            display_scale=max(0.1, float(args.vr_scale)),
+        )
 
         # arm (fixed to G1-29)
         arm_ik = G1_29_ArmIK()
@@ -290,8 +299,8 @@ if __name__ == '__main__':
             while START and not STOP:
                 start_time = time.time()
 
-                tv_resized_image = cv2.resize(tv_img_array, (tv_img_shape[1] // 2, tv_img_shape[0] // 2))
-                cv2.imshow("record image", tv_resized_image)
+                # tv_resized_image = cv2.resize(tv_img_array, (tv_img_shape[1] // 2, tv_img_shape[0] // 2))
+                # cv2.imshow("record image", tv_resized_image)
                 # opencv GUI communication
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
