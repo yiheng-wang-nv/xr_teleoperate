@@ -170,23 +170,13 @@ if __name__ == '__main__':
         )
         listen_keyboard_thread.start()
 
-        # image client: img_config should be the same as the configuration in image_server.py (of Robot's development computing unit)
-        if args.sim:
-            img_config = {
-                'fps': 30,
-                'head_camera_type': 'opencv',
-                'head_camera_image_shape': [480, 640],  # Head camera resolution
-                'wrist_camera_type': 'opencv',
-                'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-            }
-        else:
-            img_config = {
-                'fps': 30,
-                'head_camera_type': 'opencv',
-                'head_camera_image_shape': [480, 640],  # Head camera resolution
-                'wrist_camera_type': 'opencv',
-                'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-            }
+        img_config = {
+            'fps': 30,
+            'head_camera_type': 'opencv',
+            'head_camera_image_shape': [480, 640],  # Head camera resolution
+            'wrist_camera_type': 'opencv',
+            'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
+        }
 
         tv_img_shape = (img_config['head_camera_image_shape'][0], img_config['head_camera_image_shape'][1], 3)
 
@@ -272,7 +262,7 @@ if __name__ == '__main__':
                 task_dir=args.task_dir + args.task_name,
                 task_goal=args.task_desc,
                 frequency=args.frequency,
-                rerun_log=True,
+                rerun_log=False,
             )
             RECORDER_REF = recorder
 

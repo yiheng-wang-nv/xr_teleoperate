@@ -1,3 +1,4 @@
+import argparse
 import cv2
 import zmq
 import numpy as np
@@ -10,7 +11,8 @@ logger_mp = logging_mp.get_logger(__name__)
 
 class ImageClient:
     def __init__(self, tv_img_shape = None, tv_img_shm_name = None, wrist_img_shape = None, wrist_img_shm_name = None, 
-                       image_show = False, server_address = "192.168.123.164", port = 5555, Unit_Test = False):
+                       image_show = False, server_address = "192.168.123.164", port = 5555, Unit_Test = False,
+                       display_scale: float = 1.0):
         """
         tv_img_shape: User's expected head camera resolution shape (H, W, C). It should match the output of the image service terminal.
 
@@ -33,6 +35,7 @@ class ImageClient:
         self._image_show = image_show
         self._server_address = server_address
         self._port = port
+        self._display_scale = max(0.1, float(display_scale))
 
         self.tv_img_shape = tv_img_shape
         self.wrist_img_shape = wrist_img_shape
@@ -165,8 +168,16 @@ class ImageClient:
                     np.copyto(self.wrist_img_array, np.array(current_image[:, -self.wrist_img_shape[1]:]))
                 
                 if self._image_show:
-                    height, width = current_image.shape[:2]
-                    resized_image = cv2.resize(current_image, (width // 2, height // 2))
+                    if self._display_scale != 1.0:
+                        resized_image = cv2.resize(
+                            current_image,
+                            None,
+                            fx=self._display_scale,
+                            fy=self._display_scale,
+                            interpolation=cv2.INTER_LINEAR,
+                        )
+                    else:
+                        resized_image = current_image
                     cv2.imshow('Image Client Stream', resized_image)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         self.running = False
@@ -183,15 +194,19 @@ class ImageClient:
             self._close()
 
 if __name__ == "__main__":
-    # example1
-    # tv_img_shape = (480, 1280, 3)
-    # img_shm = shared_memory.SharedMemory(create=True, size=np.prod(tv_img_shape) * np.uint8().itemsize)
-    # img_array = np.ndarray(tv_img_shape, dtype=np.uint8, buffer=img_shm.buf)
-    # img_client = ImageClient(tv_img_shape = tv_img_shape, tv_img_shm_name = img_shm.name)
-    # img_client.receive_process()
+    parser = argparse.ArgumentParser(description="Image Client Viewer")
+    parser.add_argument("--server-address", type=str, default="192.168.123.164", help="Image server IP/hostname")
+    parser.add_argument("--port", type=int, default=5555, help="Image server port")
+    parser.add_argument("--image-show", action="store_true", help="Display the received stream")
+    parser.add_argument("--unit-test", action="store_true", help="Enable performance statistics logging")
+    parser.add_argument("--display-scale", type=float, default=1.0, help="Scale factor applied to the preview window")
+    args = parser.parse_args()
 
-    # example2
-    # Initialize the client with performance evaluation enabled
-    # client = ImageClient(image_show = True, server_address='127.0.0.1', Unit_Test=True) # local test
-    client = ImageClient(image_show = True, server_address='192.168.123.164', Unit_Test=False) # deployment test
+    client = ImageClient(
+        image_show=args.image_show,
+        server_address=args.server_address,
+        port=args.port,
+        Unit_Test=args.unit_test,
+        display_scale=args.display_scale,
+    )
     client.receive_process()
