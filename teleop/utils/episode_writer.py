@@ -36,6 +36,8 @@ class EpisodeWriter():
         
         self.item_id = -1
         self.episode_id = -1
+        self.label = None
+        self.label_note = None
         if os.path.exists(self.task_dir):
             episode_dirs = [episode_dir for episode_dir in os.listdir(self.task_dir) if 'episode_' in episode_dir]
             episode_last = sorted(episode_dirs)[-1] if len(episode_dirs) > 0 else None
@@ -119,6 +121,8 @@ class EpisodeWriter():
             self.online_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit="300MB")
 
         self.is_available = False  # After the episode is created, the class is marked as unavailable until the episode is successfully saved
+        self.label = "unspecified"
+        self.label_note = None
         logger_mp.info(f"==> New episode created: {self.episode_dir}")
         return True  # Return True if the episode is successfully created
         
@@ -198,6 +202,11 @@ class EpisodeWriter():
             logger_mp.info(f"==> episode_id:{self.episode_id}  item_id:{idx}  current_time:{curent_record_time}")
             self.rerun_logger.log_item_data(item_data)
 
+    def set_label(self, label, note=None):
+        self.label = label
+        if note is not None:
+            self.label_note = note
+
     def save_episode(self):
         """
         Trigger the save operation. This sets the save flag, and the process_queue thread will handle it.
@@ -211,6 +220,12 @@ class EpisodeWriter():
         """
         with open(self.json_path, "a", encoding="utf-8") as f:
             f.write("\n]\n}")      # Close the JSON array and object
+
+        label_payload = {"label": self.label if self.label is not None else "unspecified"}
+        if self.label_note:
+            label_payload["note"] = self.label_note
+        with open(os.path.join(self.episode_dir, "label.json"), "w", encoding="utf-8") as f:
+            json.dump(label_payload, f, ensure_ascii=False, indent=2)
 
         self.need_save = False     # Reset the save flag
         self.is_available = True   # Mark the class as available after saving
