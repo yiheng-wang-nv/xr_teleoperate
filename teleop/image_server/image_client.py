@@ -13,7 +13,7 @@ class ImageClient:
     def __init__(self, tv_img_shape = None, tv_img_shm_name = None, wrist_img_shape = None, wrist_img_shm_name = None, 
                        server_address = "192.168.123.164", port = 5555, Unit_Test = False,
                        display_scale: float = 1.0, hide_wrist: bool = False,
-                       head_width: int | None = None):
+                       head_width: int | None = None, image_show: bool = False):
         """
         tv_img_shape: User's expected head camera resolution shape (H, W, C). It should match the output of the image service terminal.
 
@@ -38,6 +38,7 @@ class ImageClient:
         self._display_scale = max(0.1, float(display_scale))
         self._hide_wrist = hide_wrist
         self._head_width_override = head_width
+        self._image_show = image_show
         self._window_created = False
         self._window_sized = False
 
@@ -170,38 +171,35 @@ class ImageClient:
                 if self.wrist_enable_shm:
                     np.copyto(self.wrist_img_array, np.array(current_image[:, -self.wrist_img_shape[1]:]))
                 
-                if not self._window_created:
+                if self._image_show and not self._window_created:
                     cv2.namedWindow('Image Client Stream', cv2.WINDOW_NORMAL)
                     self._window_created = True
                     self._window_sized = False
 
-                display_image = current_image
-                head_width = None
-                if self.tv_img_shape is not None:
-                    head_width = self.tv_img_shape[1]
-                elif self._head_width_override:
-                    head_width = self._head_width_override
+                if self._image_show:
+                    display_image = current_image
+                    head_width = self.tv_img_shape[1] if self.tv_img_shape is not None else self._head_width_override
 
-                if self._hide_wrist and head_width:
-                    display_image = current_image[:, :head_width]
+                    if self._hide_wrist and head_width:
+                        display_image = current_image[:, :head_width]
 
-                if self._display_scale != 1.0:
-                    resized_image = cv2.resize(
-                        display_image,
-                        None,
-                        fx=self._display_scale,
-                        fy=self._display_scale,
-                        interpolation=cv2.INTER_LINEAR,
-                    )
-                else:
-                    resized_image = display_image
-                if not self._window_sized:
-                    cv2.resizeWindow('Image Client Stream', resized_image.shape[1], resized_image.shape[0])
-                    self._window_sized = True
+                    if self._display_scale != 1.0:
+                        resized_image = cv2.resize(
+                            display_image,
+                            None,
+                            fx=self._display_scale,
+                            fy=self._display_scale,
+                            interpolation=cv2.INTER_LINEAR,
+                        )
+                    else:
+                        resized_image = display_image
+                    if not self._window_sized:
+                        cv2.resizeWindow('Image Client Stream', resized_image.shape[1], resized_image.shape[0])
+                        self._window_sized = True
 
-                cv2.imshow('Image Client Stream', resized_image)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    self.running = False
+                    cv2.imshow('Image Client Stream', resized_image)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        self.running = False
 
                 if self._enable_performance_eval:
                     self._update_performance_metrics(timestamp, frame_id, receive_time)
@@ -222,6 +220,7 @@ if __name__ == "__main__":
     parser.add_argument("--display-scale", type=float, default=1.0, help="Scale factor applied to the preview window")
     parser.add_argument("--hide-wrist", action="store_true", help="Hide wrist camera regions in the preview")
     parser.add_argument("--head-width", type=int, default=640, help="Head camera width within the combined frame")
+    parser.add_argument("--image-show", action="store_true", help="Display the preview window")
     args = parser.parse_args()
 
     client = ImageClient(
@@ -231,5 +230,6 @@ if __name__ == "__main__":
         display_scale=args.display_scale,
         hide_wrist=args.hide_wrist,
         head_width=args.head_width,
+        image_show=args.image_show,
     )
     client.receive_process()
