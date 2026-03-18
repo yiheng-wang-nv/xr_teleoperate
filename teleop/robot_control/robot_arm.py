@@ -112,8 +112,9 @@ class G1_29_ArmController:
         self.msg.mode_machine = self.get_mode_machine()
 
         self.all_motor_q = self.get_current_motor_q()
+        self.q_target = self.get_current_dual_arm_q()
         logger_mp.debug(f"Current all body motor state q:\n{self.all_motor_q} \n")
-        logger_mp.debug(f"Current two arms motor state q:\n{self.get_current_dual_arm_q()}\n")
+        logger_mp.debug(f"Current two arms motor state q:\n{self.q_target}\n")
         logger_mp.info("Lock all joints except two arms...\n")
 
         arm_indices = set(member.value for member in G1_29_JointArmIndex)
@@ -239,6 +240,45 @@ class G1_29_ArmController:
                 break
             current_attempts += 1
             time.sleep(0.05)
+
+    def ctrl_arm_through_waypoints(self, waypoints, velocity_limit=5.0, tolerance=0.15):
+        '''Move arms through a sequence of joint-space waypoints with velocity limiting.
+        Args:
+            waypoints: list of 14-element arrays
+                       [L_SP, L_SR, L_SY, L_E, L_WR, L_WP, L_WY,
+                        R_SP, R_SR, R_SY, R_E, R_WR, R_WP, R_WY]
+            velocity_limit: max joint velocity (rad/s) during motion.
+            tolerance: convergence threshold (rad) per joint.
+        '''
+        saved_limit = self.arm_velocity_limit
+        self.arm_velocity_limit = velocity_limit
+
+        for i, wp in enumerate(waypoints):
+            wp = np.asarray(wp, dtype=float)
+            logger_mp.info(f"[G1_29_ArmController] Moving to waypoint {i+1}/{len(waypoints)}")
+            with self.ctrl_lock:
+                self.q_target = wp
+
+            max_wait = 100
+            for _ in range(max_wait):
+                current_q = self.get_current_dual_arm_q()
+                if np.all(np.abs(current_q - wp) < tolerance):
+                    break
+                time.sleep(0.05)
+            else:
+                logger_mp.warning(f"[G1_29_ArmController] Waypoint {i+1} not fully reached within timeout, proceeding.")
+
+        self.arm_velocity_limit = saved_limit
+        logger_mp.info("[G1_29_ArmController] All waypoints completed.")
+
+    def ctrl_dual_arm_release(self):
+        '''Gradually release arm motor control so the arms hang naturally under gravity.'''
+        if self.motion_mode:
+            logger_mp.info("[G1_29_ArmController] Releasing arm control for natural hang...")
+            for weight in np.linspace(1, 0, num=101):
+                self.msg.motor_cmd[G1_29_JointIndex.kNotUsedJoint0].q = weight
+                time.sleep(0.02)
+            logger_mp.info("[G1_29_ArmController] Arms released.")
 
     def speed_gradual_max(self, t = 5.0):
         '''Parameter t is the total time required for arms velocity to gradually increase to its maximum value, in seconds. The default is 5.0.'''

@@ -267,6 +267,13 @@ if __name__ == '__main__':
             RECORDER_REF = recorder
 
 
+        # Move arms to natural hanging home position before starting
+        HANG_HOME_Q = [0, 0, 0, 1.0, 0, 0, 0,
+                       0, 0, 0, 1.0, 0, 0, 0]
+        logger_mp.info("Moving arms to home position (natural hang) ...")
+        arm_ctrl.ctrl_arm_through_waypoints([HANG_HOME_Q], velocity_limit=5.0, tolerance=0.1)
+        logger_mp.info("Arms at home position.")
+
         logger_mp.info("Press 'r' or Left A button to start/resume; 'r'/LA again to pause; 'q' to exit.")
         while not STOP:
             # Wait until START is True or STOP requested
@@ -519,7 +526,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         logger_mp.info("KeyboardInterrupt, exiting program...")
     finally:
-        arm_ctrl.ctrl_dual_arm_go_home()
+        arm_ctrl.ctrl_dual_arm_release()
 
         stop_listening()
         if listen_keyboard_thread is not None:
