@@ -290,6 +290,29 @@ class G1_29_ArmController:
         '''set arms velocity to the maximum value immediately, instead of gradually increasing.'''
         self.arm_velocity_limit = 30.0
 
+    def ctrl_lower_body_to_zero(self, duration=2.0):
+        '''Gradually move all non-arm joints (legs, hip, waist) to zero.
+        After this method returns, the lower-body joints stay commanded at
+        zero in self.msg, so the publish thread keeps holding them there.
+        Args:
+            duration: interpolation time in seconds.
+        '''
+        arm_indices = set(m.value for m in G1_29_JointArmIndex)
+        not_used = {m.value for m in G1_29_JointIndex if m.name.startswith('kNotUsed')}
+        lower_indices = [m for m in G1_29_JointIndex
+                         if m.value not in arm_indices and m.value not in not_used]
+
+        start_q = {idx: self.msg.motor_cmd[idx].q for idx in lower_indices}
+
+        logger_mp.info("[G1_29_ArmController] Moving lower body to zero ...")
+        num_steps = max(int(duration / 0.02), 1)
+        for step in range(1, num_steps + 1):
+            alpha = step / num_steps
+            for idx in lower_indices:
+                self.msg.motor_cmd[idx].q = start_q[idx] * (1.0 - alpha)
+            time.sleep(0.02)
+        logger_mp.info("[G1_29_ArmController] Lower body at zero.")
+
     def _Is_weak_motor(self, motor_index):
         weak_motors = [
             G1_29_JointIndex.kLeftAnklePitch.value,

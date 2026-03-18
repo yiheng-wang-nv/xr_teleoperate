@@ -274,6 +274,9 @@ if __name__ == '__main__':
         arm_ctrl.ctrl_arm_through_waypoints([HANG_HOME_Q], velocity_limit=5.0, tolerance=0.1)
         logger_mp.info("Arms at home position.")
 
+        # Move lower body / hip / waist to zero and hold there throughout teleoperation
+        arm_ctrl.ctrl_lower_body_to_zero(duration=2.0)
+
         logger_mp.info("Press 'r' or Left A button to start/resume; 'r'/LA again to pause; 'q' to exit.")
         while not STOP:
             # Wait until START is True or STOP requested
