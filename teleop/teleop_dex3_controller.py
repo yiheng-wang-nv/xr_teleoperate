@@ -172,9 +172,7 @@ if __name__ == '__main__':
 
         img_config = {
             'fps': 30,
-            'head_camera_type': 'opencv',
             'head_camera_image_shape': [480, 640],  # Head camera resolution
-            'wrist_camera_type': 'opencv',
             'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
         }
 
@@ -268,8 +266,8 @@ if __name__ == '__main__':
 
 
         # Move arms to natural hanging home position before starting
-        HANG_HOME_Q = [0, 0, 0, 1.0, 0, 0, 0,
-                       0, 0, 0, 1.0, 0, 0, 0]
+        HANG_HOME_Q = [0.5, 0, 0, 1.2, -1.5708, -0.7, 0,
+                       0.5, 0, 0, 1.2, 1.5708, -0.7, 0]
         logger_mp.info("Moving arms to home position (natural hang) ...")
         arm_ctrl.ctrl_arm_through_waypoints([HANG_HOME_Q], velocity_limit=5.0, tolerance=0.1)
         logger_mp.info("Arms at home position.")
